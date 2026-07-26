@@ -1,0 +1,6 @@
+# Secrets — never commit API keys or credentials
+secrets/
+
+# Go build artifacts
+/gai
+*.exe
