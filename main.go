@@ -45,6 +45,7 @@ func main() {
 	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
 		Model: model,
 		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage("You are a funny comedian and a nerdy techy."),
 			openai.UserMessage(prompt),
 		},
 	})
