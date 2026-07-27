@@ -1,8 +1,7 @@
 // Package telemetry exports OpenTelemetry traces over OTLP/gRPC.
 //
 // Spans go to a collector on localhost:4317 by default — a Jaeger container or
-// any other OTLP receiver. WithLaminar switches the destination to Laminar
-// (lmnr.ai) instead, which is what the course uses.
+// any other OTLP receiver.
 package telemetry
 
 import (
@@ -27,34 +26,20 @@ const (
 	//	docker run --rm -p 16686:16686 -p 4317:4317 \
 	//		cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
 	localEndpoint = "localhost:4317"
-
-	// laminarEndpoint is Laminar's cloud OTLP/gRPC ingest.
-	laminarEndpoint = "api.lmnr.ai:8443"
 )
 
 type config struct {
 	endpoint string
-	headers  map[string]string
-	insecure bool
 }
 
 // An Option configures where traces are sent.
 type Option func(*config)
 
-// WithEndpoint sends spans to the given host:port over plaintext gRPC instead
-// of the default local collector.
+// WithEndpoint sends spans to the given host:port instead of the default local
+// collector. The connection is plaintext, so this is for collectors you run
+// yourself; a hosted backend would also need TLS and an auth header.
 func WithEndpoint(hostport string) Option {
 	return func(c *config) { c.endpoint = hostport }
-}
-
-// WithLaminar sends spans to Laminar's cloud ingest over TLS, authenticated
-// with a project API key.
-func WithLaminar(apiKey string) Option {
-	return func(c *config) {
-		c.endpoint = laminarEndpoint
-		c.headers = map[string]string{"authorization": "Bearer " + apiKey}
-		c.insecure = false
-	}
 }
 
 // Init installs a global tracer provider and returns a function that flushes
@@ -64,20 +49,15 @@ func WithLaminar(apiKey string) Option {
 // The exporter dials lazily: if no collector is listening the program still
 // works, it just drops spans.
 func Init(ctx context.Context, opts ...Option) (func(context.Context) error, error) {
-	cfg := config{endpoint: localEndpoint, insecure: true}
+	cfg := config{endpoint: localEndpoint}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 
-	grpcOpts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(cfg.endpoint)}
-	if cfg.insecure {
-		grpcOpts = append(grpcOpts, otlptracegrpc.WithInsecure())
-	}
-	if len(cfg.headers) > 0 {
-		grpcOpts = append(grpcOpts, otlptracegrpc.WithHeaders(cfg.headers))
-	}
-
-	exporter, err := otlptracegrpc.New(ctx, grpcOpts...)
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(cfg.endpoint),
+		otlptracegrpc.WithInsecure(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("creating OTLP exporter: %w", err)
 	}

@@ -26,9 +26,9 @@ The only thing linking a schema to its implementation is the name string. Tool f
 
 ## Telemetry
 
-`telemetry.Init` installs a global tracer provider exporting OTLP/gRPC to `localhost:4317`; `telemetry.WithLaminar(key)` retargets it at lmnr.ai over TLS. It returns a shutdown function that must run before exit, since spans are batched — `main` bounds it with `flushTimeout` so a missing collector can't stall the program.
+`telemetry.Init` installs a global tracer provider exporting OTLP/gRPC to `localhost:4317`; `telemetry.WithEndpoint` retargets it. The connection is always plaintext, so a hosted backend would need TLS and an auth header added first. It returns a shutdown function that must run before exit, since spans are batched — `main` bounds it with `flushTimeout` so a missing collector can't stall the program.
 
-Span attributes follow the OpenTelemetry GenAI conventions (`gen_ai.prompt.{i}.role`, `gen_ai.usage.input_tokens`, …) plus Laminar's `lmnr.span.type`. Keep new spans consistent with those names — Laminar renders spans based on them.
+Span attributes follow the OpenTelemetry GenAI conventions (`gen_ai.prompt.{i}.role`, `gen_ai.usage.input_tokens`, …). Keep new spans consistent with those names.
 
 To see traces locally, run Jaeger: `docker run --rm -p 16686:16686 -p 4317:4317 cr.jaegertracing.io/jaegertracing/jaeger:2.20.0`, UI at localhost:16686.
 

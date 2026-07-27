@@ -38,7 +38,7 @@ docker run --rm --name jaeger \
 
 Traces then show up at [localhost:16686](http://localhost:16686). Without a collector the program still works — spans are dropped and a flush error is logged on exit.
 
-The course uses [Laminar](https://lmnr.ai); `telemetry.WithLaminar(apiKey)` points the exporter there instead. The span attributes follow the OpenTelemetry GenAI conventions plus Laminar's `lmnr.span.type`, so both backends render the traces sensibly.
+Span attributes follow the OpenTelemetry GenAI conventions, so any OTLP backend will do; `telemetry.WithEndpoint` points the exporter at a different one.
 
 ## Usage
 

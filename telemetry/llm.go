@@ -10,12 +10,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Laminar reads these attributes to render a span as a model call rather than
-// a plain one. They follow the OpenTelemetry GenAI conventions, except for the
-// lmnr.* keys, which are Laminar's own. Collectors that don't know them, such
-// as Jaeger, just show them as ordinary attributes.
+// Attribute keys from the OpenTelemetry GenAI conventions. Backends that know
+// them can render a span as a model call; the rest show them as ordinary
+// attributes.
 const (
-	spanTypeKey      = attribute.Key("lmnr.span.type")
 	systemKey        = attribute.Key("gen_ai.system")
 	requestModelKey  = attribute.Key("gen_ai.usage.request_model")
 	responseModelKey = attribute.Key("gen_ai.usage.response_model")
@@ -28,7 +26,6 @@ const (
 // EndLLM.
 func StartLLM(ctx context.Context, model string, msgs []openai.ChatCompletionMessageParamUnion) (context.Context, trace.Span) {
 	ctx, span := Tracer().Start(ctx, "chat "+model, trace.WithAttributes(
-		spanTypeKey.String("LLM"),
 		systemKey.String("openai"),
 		requestModelKey.String(model),
 	))
@@ -73,7 +70,6 @@ func EndLLM(span trace.Span, completion *openai.ChatCompletion, err error) {
 // StartTool starts a span covering one tool invocation.
 func StartTool(ctx context.Context, name, args string) (context.Context, trace.Span) {
 	return Tracer().Start(ctx, "tool "+name, trace.WithAttributes(
-		spanTypeKey.String("TOOL"),
 		attribute.String("gen_ai.tool.name", name),
 		attribute.String("gen_ai.tool.arguments", args),
 	))
