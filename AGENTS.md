@@ -12,7 +12,17 @@ That framing drives most decisions here: **build from primitives, don't adopt an
 
 The course order is Agent Basics → Tool Calling → Evals → Agent Loop → Multi-Turn Evals → File System Tools → Web Search & Context Management → Shell Tool → Human Guidance & Approvals. The README tracks which modules are done; check it before assuming a capability exists.
 
-Currently the entire program is `main.go` — a single-turn prompt-and-print CLI. No packages, no tests, no build tooling beyond the Go toolchain.
+`main.go` holds the CLI and the OpenAI wiring; `tools/` holds the tool registry. No tests yet, no build tooling beyond the Go toolchain.
+
+**Check for existing code before writing new code.** Look through the packages and files already in the repo for a type, function, or registry that covers what you need, and extend or reuse it. Do not add a second implementation alongside one that already exists — this happened once with the datetime tool, which was written into `main.go` while `tools/datetime.go` already defined it.
+
+## Tools
+
+A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All`; `tools.ByName` does the lookup.
+
+The `tools` package deliberately has no dependency on `openai-go` — `toolParams` in `main.go` converts the registry into `[]openai.ChatCompletionToolParam`. Keep the SDK out of `tools/`.
+
+The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 
 ## Commands
 

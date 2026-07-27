@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
@@ -17,50 +16,6 @@ const (
 	apiKeyPath = "secrets/openai-api-key"
 	model      = openai.ChatModelGPT4oMini
 )
-
-// tools are the function schemas advertised to the model. Each Name must have a
-// matching entry in toolFuncs; that string is the only thing linking the two.
-var tools = []openai.ChatCompletionToolParam{{
-	Function: openai.FunctionDefinitionParam{
-		Name:        "current_datetime",
-		Description: openai.String("Current date and time. Use for anything about today, now, or the current year."),
-		Parameters: openai.FunctionParameters{
-			"type": "object",
-			"properties": map[string]any{
-				"timezone": map[string]any{
-					"type":        "string",
-					"description": "IANA timezone name, e.g. Europe/Madrid. Omit for server local time.",
-				},
-			},
-		},
-	},
-}}
-
-// toolFuncs dispatches a tool call by name. Arguments are model-generated JSON,
-// so they may be malformed or contain undeclared fields.
-var toolFuncs = map[string]func(json.RawMessage) (string, error){
-	"current_datetime": currentDateTime,
-}
-
-func currentDateTime(args json.RawMessage) (string, error) {
-	var p struct {
-		Timezone string `json:"timezone"`
-	}
-	if len(args) > 0 {
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", err
-		}
-	}
-	loc := time.Local
-	if p.Timezone != "" {
-		l, err := time.LoadLocation(p.Timezone)
-		if err != nil {
-			return "", fmt.Errorf("unknown timezone %q", p.Timezone)
-		}
-		loc = l
-	}
-	return time.Now().In(loc).Format(time.RFC1123), nil
-}
 
 // loadAPIKey reads the API key from a file containing nothing but the key.
 func loadAPIKey(path string) (string, error) {
@@ -91,7 +46,7 @@ func main() {
 
 	params := openai.ChatCompletionNewParams{
 		Model: model,
-		Tools: tools,
+		Tools: toolParams(tools.All),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage("You are a sassy twink with a sharp wit. Slay, queen!"),
 			openai.UserMessage(prompt),
@@ -118,6 +73,22 @@ func main() {
 	fmt.Println(msg.Content)
 }
 
+// toolParams converts the tool registry into the schema the API advertises to
+// the model. Only the name links a schema back to its implementation.
+func toolParams(ts []tools.Tool) []openai.ChatCompletionToolParam {
+	params := make([]openai.ChatCompletionToolParam, len(ts))
+	for i, t := range ts {
+		params[i] = openai.ChatCompletionToolParam{
+			Function: openai.FunctionDefinitionParam{
+				Name:        t.Name,
+				Description: openai.String(t.Description),
+				Parameters:  t.Parameters,
+			},
+		}
+	}
+	return params
+}
+
 // complete makes one request and returns the assistant message.
 func complete(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (openai.ChatCompletionMessage, error) {
 	resp, err := client.Chat.Completions.New(ctx, params)
@@ -131,13 +102,14 @@ func complete(ctx context.Context, client *openai.Client, params openai.ChatComp
 }
 
 // runTool executes a tool call, returning failures as text so the model can
-// recover from them rather than the program exiting.
+// recover from them rather than the program exiting. Arguments are
+// model-generated JSON, so they may be malformed or contain undeclared fields.
 func runTool(tc openai.ChatCompletionMessageToolCall) string {
-	fn, ok := toolFuncs[tc.Function.Name]
+	t, ok := tools.ByName(tc.Function.Name)
 	if !ok {
 		return "error: unknown tool " + tc.Function.Name
 	}
-	out, err := fn(json.RawMessage(tc.Function.Arguments))
+	out, err := t.Func(tc.Function.Arguments)
 	if err != nil {
 		return "error: " + err.Error()
 	}

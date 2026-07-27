@@ -8,14 +8,14 @@ The goal is to build the agent from primitives rather than adopt a framework: a 
 
 ## Status
 
-Early. Currently a single-turn prompt-and-print CLI — roughly the course's "Create an Agent with OpenAI SDK" lesson.
+Early. The CLI sends one prompt, runs any tools the model asks for, and prints the answer. There is no loop yet, so only a single round of tool calls is handled.
 
 Course modules, in order, and where this port stands:
 
 | Module | Topic | Status |
 | --- | --- | --- |
 | Agent Basics | Single call to the model | Done |
-| Tool Calling | Model-invoked Go functions | Not started |
+| Tool Calling | Model-invoked Go functions | Done — one round of calls |
 | Evals | Scoring non-deterministic output | Not started |
 | Agent Loop | Multi-step reason/act until done | Not started |
 | Multi-Turn Evals | System prompts, conversation scoring | Not started |
