@@ -261,7 +261,13 @@ func TestEval(t *testing.T) {
 				passed++
 			}
 
+			// Always report the rate, not just on failure: a case scraping past
+			// its threshold and one clearing it every time both read as PASS
+			// otherwise, and the margin is the interesting part.
 			rate := float64(passed) / float64(*evalRuns)
+			t.Logf("score %d/%d (%.0f%%), threshold %.0f%%",
+				passed, *evalRuns, rate*100, c.kind.threshold()*100)
+
 			if rate < c.kind.threshold() {
 				t.Errorf("passed %d/%d (%.0f%%), want at least %.0f%%",
 					passed, *evalRuns, rate*100, c.kind.threshold()*100)
