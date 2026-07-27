@@ -8,7 +8,7 @@ The goal is to build the agent from primitives rather than adopt a framework: a 
 
 ## Status
 
-Early. The CLI takes one prompt and loops — asking the model, running whatever tools it requests, feeding the results back — until it answers without calling a tool. The reply streams to the terminal as it is generated. There is no conversation across prompts yet.
+Early. The CLI takes one prompt and loops — asking the model, running whatever tools it requests, feeding the results back — until it answers without calling a tool. There is no conversation across prompts yet.
 
 Course modules, in order, and where this port stands:
 

@@ -28,14 +28,6 @@ Every file tool routes its path through `resolve` in `tools/file.go`, which reje
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 
-## The agent loop
-
-`run` streams: it calls `NewStreaming` and feeds chunks to an `openai.ChatCompletionAccumulator`, which rebuilds the same message shape the blocking call returned, so the loop and the spans are unchanged. Only `Delta.Content` is printed as it arrives — tool call arguments stream in fragments and mean nothing until complete.
-
-`run` sets `StreamOptions.IncludeUsage` itself. Without it the final usage chunk never arrives and every `gen_ai.usage.*` attribute in the trace is zero; setting it at the call sites would make that easy to forget.
-
-Output goes to the `io.Writer` passed in — `os.Stdout` from `main`, `io.Discard` from the evals, which score trajectories rather than prose.
-
 ## Evals
 
 `eval_test.go` scores the agent's *trajectory* — which tools it called with which arguments — not the prose it produced, which varies too much to assert on. Cases come in three kinds with different pass-rate thresholds: `golden` (the prompt names what it wants, 80%), `secondary` (the tool is implied or several are chained, 60%), and `negative` (answering unaided is correct, 80%). Each case runs N times and is scored as a rate, because the model is non-deterministic even at temperature 0.
