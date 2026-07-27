@@ -30,6 +30,7 @@ const (
 
 type config struct {
 	endpoint string
+	exporter sdktrace.SpanExporter
 }
 
 // An Option configures where traces are sent.
@@ -40,6 +41,12 @@ type Option func(*config)
 // yourself; a hosted backend would also need TLS and an auth header.
 func WithEndpoint(hostport string) Option {
 	return func(c *config) { c.endpoint = hostport }
+}
+
+// WithExporter sends spans to the given exporter instead of a collector. The
+// evals use it to read a run's trajectory back out of its own trace.
+func WithExporter(exporter sdktrace.SpanExporter) Option {
+	return func(c *config) { c.exporter = exporter }
 }
 
 // Init installs a global tracer provider and returns a function that flushes
@@ -54,12 +61,19 @@ func Init(ctx context.Context, opts ...Option) (func(context.Context) error, err
 		opt(&cfg)
 	}
 
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(cfg.endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("creating OTLP exporter: %w", err)
+	// A custom exporter is in-process, so spans go to it as they end. Batching
+	// is for the network case, and it would force callers to shut the provider
+	// down before reading — which for an in-memory exporter also discards them.
+	processor := sdktrace.WithSyncer(cfg.exporter)
+	if cfg.exporter == nil {
+		grpcExporter, err := otlptracegrpc.New(ctx,
+			otlptracegrpc.WithEndpoint(cfg.endpoint),
+			otlptracegrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("creating OTLP exporter: %w", err)
+		}
+		processor = sdktrace.WithBatcher(grpcExporter)
 	}
 
 	res, err := resource.Merge(resource.Default(), resource.NewWithAttributes(
@@ -71,7 +85,7 @@ func Init(ctx context.Context, opts ...Option) (func(context.Context) error, err
 	}
 
 	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		processor,
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(provider)

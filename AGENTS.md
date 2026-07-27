@@ -28,6 +28,14 @@ Every file tool routes its path through `resolve` in `tools/file.go`, which reje
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 
+## Evals
+
+`eval_test.go` scores the agent's *trajectory* — which tools it called with which arguments — not the prose it produced, which varies too much to assert on. Cases come in three kinds with different pass-rate thresholds: `golden` (the prompt names what it wants, 80%), `secondary` (the tool is implied or several are chained, 60%), and `negative` (answering unaided is correct, 80%). Each case runs N times and is scored as a rate, because the model is non-deterministic even at temperature 0.
+
+Tool calls are read back from the run's own OpenTelemetry spans via `telemetry.WithExporter` and an in-memory exporter, so the evals and the traces agree by construction. `InMemoryExporter.Shutdown` discards its spans, so read them before shutting the provider down — that is why a custom exporter is wired as a syncer rather than a batcher.
+
+Evals share `systemPrompt` with `main`. Keep it that way: an eval against a prompt that doesn't ship measures nothing.
+
 ## Telemetry
 
 `telemetry.Init` installs a global tracer provider exporting OTLP/gRPC to `localhost:4317`; `telemetry.WithEndpoint` retargets it. The connection is always plaintext, so a hosted backend would need TLS and an auth header added first. It returns a shutdown function that must run before exit, since spans are batched — `main` bounds it with `flushTimeout` so a missing collector can't stall the program.
@@ -47,7 +55,9 @@ gofmt -l .                   # list unformatted files (should print nothing)
 go vet ./...                 # vet
 ```
 
-`go test ./...` runs the tests; `go test -run TestName ./...` runs one. Coverage is thin — only the file-tool path sandbox is tested.
+`go test ./...` runs the tests; `go test -run TestName ./...` runs one. Coverage is thin — the file-tool path sandbox and the evals.
+
+The evals in `eval_test.go` make real, billed API calls and are skipped unless `-eval` is passed: `go test -run TestEval -eval .`, or `-eval.runs=N` to change how many times each case runs (default 5). Never remove that gate; `go test ./...` must stay free.
 
 Verification loop after a change: `gofmt -l . && go vet ./... && go build -o gai . && ./gai "Reply with exactly: pong"`. The last step makes a real, billed API call — it is the only way to confirm the client wiring works, but skip it for changes that can't affect the request path.
 

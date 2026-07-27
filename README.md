@@ -16,7 +16,7 @@ Course modules, in order, and where this port stands:
 | --- | --- | --- |
 | Agent Basics | Single call to the model | Done |
 | Tool Calling | Model-invoked Go functions | Done |
-| Evals | Scoring non-deterministic output | Not started |
+| Evals | Scoring non-deterministic output | Done |
 | Agent Loop | Multi-step reason/act until done | Done |
 | Multi-Turn Evals | System prompts, conversation scoring | Not started |
 | File System Tools | Read, write, list, delete | Done |
@@ -29,6 +29,19 @@ Course modules, in order, and where this port stands:
 The agent can call `current_datetime`, `read_file`, `write_file`, `list_files`, and `delete_file`.
 
 The file tools operate on a temporary workspace created at the start of each run and deleted at the end. It starts empty, the agent cannot reach outside it — absolute paths and paths escaping the workspace are refused — and nothing it writes survives the run. That also means the agent cannot read this repository, only files it created itself.
+
+## Evals
+
+The evals score which tools the agent reached for, not the wording of its answers. Cases are grouped as golden (the prompt names what it wants), secondary (the tool is implied, or several are needed), and negative (no tool should be called at all). Each runs several times and has to clear a pass rate, since the model is non-deterministic even at temperature 0.
+
+They make real API calls, so they only run when asked:
+
+```bash
+go test -run TestEval -eval .              # 5 runs per case
+go test -run TestEval -eval -eval.runs=10 -v .
+```
+
+`go test ./...` skips them.
 
 ## Telemetry
 

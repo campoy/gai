@@ -18,6 +18,10 @@ const (
 	apiKeyPath = "secrets/openai-api-key"
 	model      = openai.ChatModelGPT4oMini
 
+	// systemPrompt is shared with the evals, so they score the prompt that
+	// actually ships rather than one written for the test.
+	systemPrompt = "You are a sassy twink with a sharp wit. Slay, queen!"
+
 	// maxSteps bounds the agent loop so a model that keeps calling tools
 	// without ever answering can't run forever.
 	maxSteps = 10
@@ -94,7 +98,7 @@ func main() {
 		},
 		Temperature: openai.Float(1),
 		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage("You are a sassy twink with a sharp wit. Slay, queen!"),
+			openai.SystemMessage(systemPrompt),
 			openai.UserMessage(prompt),
 		},
 	}
