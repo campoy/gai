@@ -28,6 +28,12 @@ Every file tool routes its path through `resolve` in `tools/file.go`, which reje
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 
+## The agent loop
+
+`run` takes `*openai.ChatCompletionNewParams` and appends every turn to it — the assistant message, any tool results, and the final answer. That is what makes the stdin mode a conversation rather than a series of unrelated questions, so don't switch it back to a value receiver.
+
+With command line arguments `main` answers one prompt and exits; with none, `chat` reads a message per line until stdin closes. The `>` prompt is only printed when stdin is a character device, so piped input produces clean output. The workspace is created once per process, so files written in one message are still there in the next.
+
 ## Evals
 
 `eval_test.go` scores the agent's *trajectory* — which tools it called with which arguments — not the prose it produced, which varies too much to assert on. Cases come in three kinds with different pass-rate thresholds: `golden` (the prompt names what it wants, 80%), `secondary` (the tool is implied or several are chained, 60%), and `negative` (answering unaided is correct, 80%). Each case runs N times and is scored as a rate, because the model is non-deterministic even at temperature 0.

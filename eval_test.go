@@ -404,7 +404,7 @@ func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error
 			openai.UserMessage(c.prompt),
 		},
 	}
-	if _, err := run(context.Background(), client, params); err != nil {
+	if _, err := run(context.Background(), client, &params); err != nil {
 		return nil, err
 	}
 

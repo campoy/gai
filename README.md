@@ -8,7 +8,7 @@ The goal is to build the agent from primitives rather than adopt a framework: a 
 
 ## Status
 
-Early. The CLI takes one prompt and loops — asking the model, running whatever tools it requests, feeding the results back — until it answers without calling a tool. There is no conversation across prompts yet.
+Early. The CLI loops on each message — asking the model, running whatever tools it requests, feeding the results back — until it answers without calling a tool. With no arguments it reads messages from stdin and keeps the conversation going across them.
 
 Course modules, in order, and where this port stands:
 
@@ -68,7 +68,22 @@ go build -o gai .
 ./gai "Tell me a fun fact about the Go programming language."
 ```
 
-With no arguments, a default prompt is used.
+With arguments, the agent answers that one prompt and exits. With none, it reads one message per line from stdin until end of input, carrying the conversation and the workspace from message to message:
+
+```
+$ ./gai
+> What time is it in Tokyo?
+It's 3:07 PM in Tokyo.
+> And in Madrid? How many hours behind is that?
+In Madrid it's 8:07 AM — Tokyo is 7 hours ahead.
+> ^D
+```
+
+Input can be piped, in which case the `>` prompt is omitted:
+
+```bash
+printf 'Create a.txt saying hello\nWhat files do I have?\n' | ./gai
+```
 
 ## Configuration
 

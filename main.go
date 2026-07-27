@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -50,11 +52,6 @@ func main() {
 		log.Fatalf("loading API key: %v", err)
 	}
 
-	prompt := "Hello! Tell me a fun fact about the Go programming language."
-	if len(os.Args) > 1 {
-		prompt = strings.Join(os.Args[1:], " ")
-	}
-
 	ctx := context.Background()
 
 	shutdown, err := telemetry.Init(ctx)
@@ -99,26 +96,70 @@ func main() {
 		Temperature: openai.Float(1),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(systemPrompt),
-			openai.UserMessage(prompt),
 		},
 	}
 
-	answer, err := run(ctx, &client, params)
-	if err != nil {
+	// With a prompt on the command line, answer it and stop. With none, read
+	// one message per line until stdin closes, carrying the conversation from
+	// message to message.
+	if len(os.Args) > 1 {
+		params.Messages = append(params.Messages, openai.UserMessage(strings.Join(os.Args[1:], " ")))
+		answer, err := run(ctx, &client, &params)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(answer)
+		return
+	}
+
+	if err := chat(ctx, &client, os.Stdin, os.Stdout, &params); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(answer)
+}
+
+// chat reads a message per line and replies to each, keeping every turn in the
+// conversation so later messages can refer back to earlier ones. It returns
+// when stdin closes.
+func chat(ctx context.Context, client *openai.Client, in io.Reader, out io.Writer, params *openai.ChatCompletionNewParams) error {
+	// Only prompt when someone is there to read it, so piping input in leaves
+	// the output clean.
+	prompt := func() {}
+	if f, ok := in.(*os.File); ok {
+		if info, err := f.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			prompt = func() { fmt.Fprint(out, "> ") }
+		}
+	}
+
+	lines := bufio.NewScanner(in)
+	for prompt(); lines.Scan(); prompt() {
+		message := strings.TrimSpace(lines.Text())
+		if message == "" {
+			continue
+		}
+
+		params.Messages = append(params.Messages, openai.UserMessage(message))
+		answer, err := run(ctx, client, params)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, answer)
+	}
+	return lines.Err()
 }
 
 // run drives the agent loop: ask the model, run whatever tools it requests,
 // feed the results back, and repeat until it answers without calling a tool.
-func run(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (string, error) {
+//
+// Every turn is appended to params, including the model's final answer, so a
+// caller holding the same params across several messages gets a conversation
+// rather than a series of unrelated questions.
+func run(ctx context.Context, client *openai.Client, params *openai.ChatCompletionNewParams) (string, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "agent")
 	defer span.End()
 
 	for range maxSteps {
 		callCtx, callSpan := telemetry.StartLLM(ctx, params.Model, params.Messages)
-		resp, err := client.Chat.Completions.New(callCtx, params)
+		resp, err := client.Chat.Completions.New(callCtx, *params)
 		telemetry.EndLLM(callSpan, resp, err)
 		if err != nil {
 			return "", fmt.Errorf("calling API: %w", err)
@@ -127,13 +168,14 @@ func run(ctx context.Context, client *openai.Client, params openai.ChatCompletio
 			return "", fmt.Errorf("no choices returned")
 		}
 		msg := resp.Choices[0].Message
+		// The assistant turn goes back whether or not it asked for tools: a tool
+		// result without its call is rejected by the API, and an answer missing
+		// from the history is one the next message cannot refer to.
+		params.Messages = append(params.Messages, msg.ToParam())
 
 		if len(msg.ToolCalls) == 0 {
 			return msg.Content, nil
 		}
-		// The assistant turn that requested the tools has to go back too; a tool
-		// result without its call is rejected by the API.
-		params.Messages = append(params.Messages, msg.ToParam())
 		for _, tc := range msg.ToolCalls {
 			params.Messages = append(params.Messages, openai.ToolMessage(runTool(ctx, tc), tc.ID))
 		}
