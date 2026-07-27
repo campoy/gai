@@ -40,6 +40,8 @@ With command line arguments `main` answers one prompt and exits; with none, `cha
 
 There is a fourth kind, `ambiguous` (40%), for prompts where another agent could justify the other choice but one option loses data or guesses. When a case fails, fix the agent or change the expectation deliberately — never lower a threshold to make it green.
 
+`judge_test.go` is the multi-turn half: several messages through one conversation, then the transcript and the final workspace contents handed to a model that must reply with a strict JSON schema of `{score 1-10, reason}`. It grades decisions and truthfulness only — tone and persona are explicitly out of scope, since the system prompt requires the agent to be flamboyant. The judge is `o4-mini` at high reasoning effort; reasoning models reject `temperature`, so the bar is a mean across runs. `declines_to_guess_when_the_request_is_unclear` fails at 1/10 by design: the agent deletes both candidate files on an ambiguous request.
+
 `EVALS.md` records the current scores and what the suite has caught, including why `write_file` refuses to clobber a file rather than merely warning against it. Update its results table when scores move.
 
 Tool calls are read back from the run's own OpenTelemetry spans via `telemetry.WithExporter` and an in-memory exporter, so the evals and the traces agree by construction. `InMemoryExporter.Shutdown` discards its spans, so read them before shutting the provider down — that is why a custom exporter is wired as a syncer rather than a batcher.

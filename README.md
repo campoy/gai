@@ -18,7 +18,7 @@ Course modules, in order, and where this port stands:
 | Tool Calling | Model-invoked Go functions | Done |
 | Evals | Scoring non-deterministic output | Done |
 | Agent Loop | Multi-step reason/act until done | Done |
-| Multi-Turn Evals | System prompts, conversation scoring | Not started |
+| Multi-Turn Evals | System prompts, conversation scoring | Done |
 | File System Tools | Read, write, list, delete | Done |
 | Web Search & Context | Search plus window compaction | Not started |
 | Shell Tool | Sandboxed command execution | Not started |
