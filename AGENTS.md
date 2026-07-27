@@ -50,6 +50,7 @@ The whole `secrets/` directory is gitignored. A live key was once committed and 
 ## Git conventions
 
 - **Commit every large change.** Don't wait to be asked and don't ask for permission each time. A substantial unit of work — a feature, a refactor, a bug fix spanning files — gets its own commit with a descriptive message. Small tweaks and in-progress edits don't.
+- **Write a body, not just a subject.** Any commit worth making on its own gets a short paragraph explaining what changed and why — the reasoning that isn't visible in the diff. Trivial one-liners can stay subject-only.
 - **No attribution trailers.** Do not add `Co-Authored-By: Claude` or any other self-attribution. The history reads as the author's own.
 - **Commit directly to `main`.** Local-only repo, no remote, no feature branches.
 - **Stage explicit paths** (`git add main.go`), not `git add -A` or `git add .`, so nothing under `secrets/` can slip in.
