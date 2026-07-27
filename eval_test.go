@@ -50,6 +50,14 @@ const (
 	// where a tool description is so eager that everything looks like a file
 	// operation.
 	negative
+
+	// ambiguous cases have more than one defensible answer, but we hold an
+	// opinion about which is better — usually because the alternative quietly
+	// loses data or answers without checking. The threshold is low on purpose:
+	// these are not meant to be at 100%, they are meant to sit somewhere in the
+	// middle so the rate can move when a prompt or description changes. A case
+	// here that reaches 5/5 has stopped being ambiguous and should be promoted.
+	ambiguous
 )
 
 func (k kind) String() string {
@@ -58,9 +66,12 @@ func (k kind) String() string {
 		return "golden"
 	case secondary:
 		return "secondary"
-	default:
+	case negative:
 		return "negative"
+	case ambiguous:
+		return "ambiguous"
 	}
+	return fmt.Sprintf("kind(%d)", int(k))
 }
 
 // threshold is the fraction of runs a case of this kind must pass. Evals score
@@ -72,9 +83,12 @@ func (k kind) threshold() float64 {
 		return 0.8
 	case secondary:
 		return 0.6
-	default:
+	case negative:
 		return 0.8
+	case ambiguous:
+		return 0.4
 	}
+	return 1
 }
 
 // A toolCall is one invocation the model made during a run, read back from the
@@ -233,6 +247,71 @@ var evalCases = []evalCase{
 		prompt: "In one sentence, what is a goroutine?",
 		check:  noTools,
 	},
+
+	// Ambiguous: another agent could justify the other choice. We score the one
+	// that loses less information or guesses less.
+	{
+		name:   "append preserves the existing file",
+		kind:   ambiguous,
+		prompt: "Add 'call the dentist' to notes.md.",
+		seed:   map[string]string{"notes.md": "- water the plants\n- pay rent\n"},
+		check: func(calls []toolCall) error {
+			// Writing straight over notes.md satisfies the request and destroys
+			// two existing lines. Reading first is the only way to append.
+			if err := calledBefore(calls, "read_file", "write_file"); err != nil {
+				return err
+			}
+			return calledOnce(calls, "write_file", func(c toolCall) error {
+				if got := c.arg("content"); !strings.Contains(got, "pay rent") {
+					return fmt.Errorf("content = %q, dropped the existing lines", got)
+				}
+				return nil
+			})
+		},
+	},
+	{
+		name:   "clearing notes deletes rather than blanks",
+		kind:   ambiguous,
+		prompt: "Clear out my notes.",
+		seed:   map[string]string{"notes.md": "- water the plants\n"},
+		check: func(calls []toolCall) error {
+			// Overwriting with an empty string leaves a file that looks real and
+			// is not; deleting says what happened.
+			if err := notCalled(calls, "write_file"); err != nil {
+				return err
+			}
+			return calledOnce(calls, "delete_file", nil)
+		},
+	},
+	{
+		name:   "missing file is checked, not assumed",
+		kind:   ambiguous,
+		prompt: "What's on my todo list?",
+		check: func(calls []toolCall) error {
+			// There is no todo list. Answering "you have none" without looking
+			// happens to be right, and is right by luck.
+			if len(calls) == 0 {
+				return fmt.Errorf("answered without checking the workspace")
+			}
+			return nil
+		},
+	},
+	{
+		name:   "reads the file it was asked about",
+		kind:   ambiguous,
+		prompt: "Show me my shopping list.",
+		seed:   map[string]string{"shopping.md": "- milk\n- bread\n"},
+		check: func(calls []toolCall) error {
+			// Listing the workspace first is reasonable, but stopping there
+			// answers a question that was not asked.
+			return calledOnce(calls, "read_file", func(c toolCall) error {
+				if got := c.arg("path"); got != "shopping.md" {
+					return fmt.Errorf("path = %q, want shopping.md", got)
+				}
+				return nil
+			})
+		},
+	},
 }
 
 func TestEval(t *testing.T) {
@@ -361,6 +440,39 @@ func calledOnce(calls []toolCall, name string, check func(toolCall) error) error
 		return nil
 	}
 	return check(found[0])
+}
+
+// calledBefore checks that both tools were called and that the first one came
+// first. Tool spans end in call order, so the trace preserves the sequence.
+func calledBefore(calls []toolCall, first, second string) error {
+	firstAt, secondAt := -1, -1
+	for i, c := range calls {
+		if c.name == first && firstAt < 0 {
+			firstAt = i
+		}
+		if c.name == second && secondAt < 0 {
+			secondAt = i
+		}
+	}
+	switch {
+	case firstAt < 0:
+		return fmt.Errorf("never called %s (calls: %v)", first, names(calls))
+	case secondAt < 0:
+		return fmt.Errorf("never called %s (calls: %v)", second, names(calls))
+	case firstAt > secondAt:
+		return fmt.Errorf("called %s before %s (calls: %v)", second, first, names(calls))
+	}
+	return nil
+}
+
+// notCalled checks that a tool was left alone.
+func notCalled(calls []toolCall, name string) error {
+	for _, c := range calls {
+		if c.name == name {
+			return fmt.Errorf("called %s, want it left alone (calls: %v)", name, names(calls))
+		}
+	}
+	return nil
 }
 
 // noTools checks that the model answered without reaching for a tool.
