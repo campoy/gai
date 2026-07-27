@@ -32,7 +32,9 @@ The only thing linking a schema to its implementation is the name string. Tool f
 
 `eval_test.go` scores the agent's *trajectory* — which tools it called with which arguments — not the prose it produced, which varies too much to assert on. Cases come in three kinds with different pass-rate thresholds: `golden` (the prompt names what it wants, 80%), `secondary` (the tool is implied or several are chained, 60%), and `negative` (answering unaided is correct, 80%). Each case runs N times and is scored as a rate, because the model is non-deterministic even at temperature 0.
 
-There is a fourth kind, `ambiguous` (40%), for prompts where another agent could justify the other choice but one option loses data or guesses. **Two of these currently fail and are meant to**: `append_preserves_the_existing_file` scores 0/5 because the model overwrites `notes.md` instead of reading it first, silently dropping its contents; `missing_file_is_checked` scores 1/5 because it answers "you have no todo list" without looking. They encode behaviour the agent does not yet have. Fix the agent or change the expectation deliberately — do not lower the threshold to make them green.
+There is a fourth kind, `ambiguous` (40%), for prompts where another agent could justify the other choice but one option loses data or guesses. When a case fails, fix the agent or change the expectation deliberately — never lower a threshold to make it green.
+
+`EVALS.md` records the current scores and what the suite has caught, including why `write_file` refuses to clobber a file rather than merely warning against it. Update its results table when scores move.
 
 Tool calls are read back from the run's own OpenTelemetry spans via `telemetry.WithExporter` and an in-memory exporter, so the evals and the traces agree by construction. `InMemoryExporter.Shutdown` discards its spans, so read them before shutting the provider down — that is why a custom exporter is wired as a syncer rather than a batcher.
 

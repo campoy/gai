@@ -73,6 +73,34 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	}
 }
 
+// TestWriteFileRefusesToClobber covers the guard that stops the model
+// replacing a file it has not read.
+func TestWriteFileRefusesToClobber(t *testing.T) {
+	newTestWorkspace(t)
+
+	if _, err := writeFile(`{"path":"notes.md","content":"first"}`); err != nil {
+		t.Fatalf("writing a new file: %v", err)
+	}
+
+	if _, err := writeFile(`{"path":"notes.md","content":"second"}`); err == nil {
+		t.Error("overwrote an existing file without overwrite=true, want error")
+	}
+	got, err := readFile(`{"path":"notes.md"}`)
+	if err != nil {
+		t.Fatalf("readFile: %v", err)
+	}
+	if got != "first" {
+		t.Errorf("contents = %q after a refused write, want %q", got, "first")
+	}
+
+	if _, err := writeFile(`{"path":"notes.md","content":"second","overwrite":true}`); err != nil {
+		t.Fatalf("overwriting with overwrite=true: %v", err)
+	}
+	if got, _ := readFile(`{"path":"notes.md"}`); got != "second" {
+		t.Errorf("contents = %q after an acknowledged write, want %q", got, "second")
+	}
+}
+
 // newTestWorkspace creates a workspace and removes it when the test ends.
 func newTestWorkspace(t *testing.T) {
 	t.Helper()

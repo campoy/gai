@@ -28,6 +28,8 @@ Course modules, in order, and where this port stands:
 
 The agent can call `current_datetime`, `read_file`, `write_file`, `list_files`, and `delete_file`.
 
+`write_file` refuses to replace a file that already exists unless the call sets `overwrite: true`, which the model only does after reading it — otherwise "add a line to notes.md" silently discarded the rest of the file. See [EVALS.md](EVALS.md).
+
 The file tools operate on a temporary workspace created at the start of each run and deleted at the end. It starts empty, the agent cannot reach outside it — absolute paths and paths escaping the workspace are refused — and nothing it writes survives the run. That also means the agent cannot read this repository, only files it created itself.
 
 ## Evals
@@ -41,7 +43,7 @@ go test -run TestEval -eval .              # 5 runs per case
 go test -run TestEval -eval -eval.runs=10 -v .
 ```
 
-`go test ./...` skips them.
+`go test ./...` skips them. [EVALS.md](EVALS.md) records the current scores and what the suite has caught.
 
 ## Telemetry
 

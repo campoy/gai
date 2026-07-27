@@ -256,17 +256,20 @@ var evalCases = []evalCase{
 		prompt: "Add 'call the dentist' to notes.md.",
 		seed:   map[string]string{"notes.md": "- water the plants\n- pay rent\n"},
 		check: func(calls []toolCall) error {
-			// Writing straight over notes.md satisfies the request and destroys
-			// two existing lines. Reading first is the only way to append.
-			if err := calledBefore(calls, "read_file", "write_file"); err != nil {
-				return err
+			// Score the write that lands, not the number of attempts: a rejected
+			// first try followed by a corrected one is the trajectory we want.
+			write := lastIndex(calls, "write_file")
+			if write < 0 {
+				return fmt.Errorf("never called write_file (calls: %v)", names(calls))
 			}
-			return calledOnce(calls, "write_file", func(c toolCall) error {
-				if got := c.arg("content"); !strings.Contains(got, "pay rent") {
-					return fmt.Errorf("content = %q, dropped the existing lines", got)
-				}
-				return nil
-			})
+			read := lastIndex(calls[:write], "read_file")
+			if read < 0 {
+				return fmt.Errorf("wrote notes.md without reading it first (calls: %v)", names(calls))
+			}
+			if got := calls[write].arg("content"); !strings.Contains(got, "pay rent") {
+				return fmt.Errorf("content = %q, dropped the existing lines", got)
+			}
+			return nil
 		},
 	},
 	{
@@ -442,27 +445,15 @@ func calledOnce(calls []toolCall, name string, check func(toolCall) error) error
 	return check(found[0])
 }
 
-// calledBefore checks that both tools were called and that the first one came
-// first. Tool spans end in call order, so the trace preserves the sequence.
-func calledBefore(calls []toolCall, first, second string) error {
-	firstAt, secondAt := -1, -1
-	for i, c := range calls {
-		if c.name == first && firstAt < 0 {
-			firstAt = i
-		}
-		if c.name == second && secondAt < 0 {
-			secondAt = i
+// lastIndex returns the position of the last call to the named tool, or -1.
+// Tool spans end in call order, so the trace preserves the sequence.
+func lastIndex(calls []toolCall, name string) int {
+	for i := len(calls) - 1; i >= 0; i-- {
+		if calls[i].name == name {
+			return i
 		}
 	}
-	switch {
-	case firstAt < 0:
-		return fmt.Errorf("never called %s (calls: %v)", first, names(calls))
-	case secondAt < 0:
-		return fmt.Errorf("never called %s (calls: %v)", second, names(calls))
-	case firstAt > secondAt:
-		return fmt.Errorf("called %s before %s (calls: %v)", second, first, names(calls))
-	}
-	return nil
+	return -1
 }
 
 // notCalled checks that a tool was left alone.

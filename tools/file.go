@@ -50,11 +50,15 @@ var ReadFile = New(
 // WriteFile creates or overwrites a file in the workspace.
 var WriteFile = New(
 	"write_file",
-	"Write text to a file, creating it if needed and replacing any existing contents. Paths are relative to a temporary workspace that only exists for this conversation, so nothing written here is permanent.",
+	"Write text to a file, creating it if needed. This REPLACES the whole file: anything already in it is lost. To add to, edit, or append to a file that already exists, call read_file first and write back the old contents together with the new. Paths are relative to a temporary workspace that only exists for this conversation, so nothing written here is permanent.",
 	pathSchema("Path of the file to write, relative to the workspace.", map[string]any{
 		"content": map[string]any{
 			"type":        "string",
-			"description": "Full contents to write. Replaces the file entirely.",
+			"description": "Full contents of the file after the write. Not a fragment to append — whatever is not included here is deleted.",
+		},
+		"overwrite": map[string]any{
+			"type":        "boolean",
+			"description": "Set true only after reading an existing file, to confirm you are replacing its contents on purpose. Required when the file already exists.",
 		},
 	}, "content"),
 	writeFile,
@@ -109,8 +113,9 @@ func readFile(args string) (string, error) {
 
 func writeFile(args string) (string, error) {
 	var p struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path      string `json:"path"`
+		Content   string `json:"content"`
+		Overwrite bool   `json:"overwrite"`
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
 		return "", err
@@ -118,6 +123,17 @@ func writeFile(args string) (string, error) {
 	path, err := resolve(p.Path)
 	if err != nil {
 		return "", err
+	}
+
+	// Refuse to clobber a file the model has not acknowledged. Describing the
+	// danger in the tool description was not enough on its own: the model wrote
+	// straight over an existing file every time, reporting success while its
+	// contents were lost. An error it has to handle is not so easy to ignore.
+	if !p.Overwrite {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return "", fmt.Errorf("%s already exists (%d bytes); read it first, then call again with overwrite=true and the full contents you want it to end up with",
+				p.Path, info.Size())
+		}
 	}
 	// The workspace starts empty, so any subdirectory the model asks for has to
 	// be created here or every nested write fails.
