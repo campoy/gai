@@ -51,6 +51,13 @@ func main() {
 	params := openai.ChatCompletionNewParams{
 		Model: model,
 		Tools: tools.All.AsToolParams(),
+		// "auto" lets the model decide whether to call a tool. It is already the
+		// default whenever Tools is non-empty; "none" and "required" are the
+		// other choices, and a named tool can be forced with
+		// ChatCompletionToolChoiceOptionParamOfChatCompletionNamedToolChoice.
+		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: openai.String("auto"),
+		},
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage("You are a sassy twink with a sharp wit. Slay, queen!"),
 			openai.UserMessage(prompt),
