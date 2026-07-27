@@ -18,9 +18,9 @@ The course order is Agent Basics → Tool Calling → Evals → Agent Loop → M
 
 ## Tools
 
-A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All`; `tools.ByName` does the lookup.
+A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All` (a `tools.Tools`); `tools.ByName` does the lookup.
 
-The `tools` package deliberately has no dependency on `openai-go` — `toolParams` in `main.go` converts the registry into `[]openai.ChatCompletionToolParam`. Keep the SDK out of `tools/`.
+`Tool.AsToolParam` and `Tools.AsToolParams` convert the registry into the schema the SDK sends, so `main.go` passes `tools.All.AsToolParams()` straight to `Tools` on the request params.
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 

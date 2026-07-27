@@ -50,7 +50,7 @@ func main() {
 
 	params := openai.ChatCompletionNewParams{
 		Model: model,
-		Tools: toolParams(tools.All),
+		Tools: tools.All.AsToolParams(),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage("You are a sassy twink with a sharp wit. Slay, queen!"),
 			openai.UserMessage(prompt),
@@ -90,22 +90,6 @@ func run(ctx context.Context, client *openai.Client, params openai.ChatCompletio
 	return "", fmt.Errorf("gave up after %d steps without a final answer", maxSteps)
 }
 
-// toolParams converts the tool registry into the schema the API advertises to
-// the model. Only the name links a schema back to its implementation.
-func toolParams(ts []tools.Tool) []openai.ChatCompletionToolParam {
-	params := make([]openai.ChatCompletionToolParam, len(ts))
-	for i, t := range ts {
-		params[i] = openai.ChatCompletionToolParam{
-			Function: openai.FunctionDefinitionParam{
-				Name:        t.Name,
-				Description: openai.String(t.Description),
-				Parameters:  t.Parameters,
-			},
-		}
-	}
-	return params
-}
-
 // runTool executes a tool call, returning failures as text so the model can
 // recover from them rather than the program exiting. Arguments are
 // model-generated JSON, so they may be malformed or contain undeclared fields.
@@ -118,5 +102,6 @@ func runTool(tc openai.ChatCompletionMessageToolCall) string {
 	if err != nil {
 		return "error: " + err.Error()
 	}
+	log.Printf("tool %q called with args %q, returned %q", t.Name, tc.Function.Arguments, out)
 	return out
 }

@@ -1,6 +1,8 @@
 // Tools contains utility functions for the application.
 package tools
 
+import "github.com/openai/openai-go"
+
 // Tool represents a utility function with a name, description, and the function itself.
 type Tool struct {
 	Name        string
@@ -25,8 +27,32 @@ func New(name, description string, parameters map[string]any, fn Function) Tool 
 	}
 }
 
+// AsToolParam converts the tool into the schema advertised to the model. Only
+// the name links a schema back to its implementation.
+func (t Tool) AsToolParam() openai.ChatCompletionToolParam {
+	return openai.ChatCompletionToolParam{
+		Function: openai.FunctionDefinitionParam{
+			Name:        t.Name,
+			Description: openai.String(t.Description),
+			Parameters:  t.Parameters,
+		},
+	}
+}
+
+// Tools is a set of tools that can be advertised to the model together.
+type Tools []Tool
+
+// AsToolParams converts every tool in the set into its schema.
+func (ts Tools) AsToolParams() []openai.ChatCompletionToolParam {
+	params := make([]openai.ChatCompletionToolParam, len(ts))
+	for i, t := range ts {
+		params[i] = t.AsToolParam()
+	}
+	return params
+}
+
 // All is every tool available to the agent.
-var All = []Tool{DateTime}
+var All = Tools{DateTime}
 
 // ByName returns the tool registered under the given name.
 func ByName(name string) (Tool, bool) {
