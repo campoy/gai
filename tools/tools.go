@@ -52,7 +52,7 @@ func (ts Tools) AsToolParams() []openai.ChatCompletionToolParam {
 }
 
 // All is every tool available to the agent.
-var All = Tools{DateTime}
+var All = Tools{DateTime, ReadFile, WriteFile, ListFiles, DeleteFile}
 
 // ByName returns the tool registered under the given name.
 func ByName(name string) (Tool, bool) {

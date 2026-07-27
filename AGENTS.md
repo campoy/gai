@@ -18,7 +18,9 @@ The course order is Agent Basics → Tool Calling → Evals → Agent Loop → M
 
 ## Tools
 
-A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All` (a `tools.Tools`); `tools.ByName` does the lookup.
+A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All` (a `tools.Tools`); `tools.ByName` does the lookup. Names are snake_case (`read_file`, `current_datetime`).
+
+Every file tool routes its path through `resolve` in `tools/file.go`, which rejects absolute paths, anything escaping the working directory, and the `denied` directories (`secrets/`, `.git/`). The model picks these paths out of untrusted text — never add a file tool that bypasses `resolve`, and keep `TestResolve` passing.
 
 `Tool.AsToolParam` and `Tools.AsToolParams` convert the registry into the schema the SDK sends, so `main.go` passes `tools.All.AsToolParams()` straight to `Tools` on the request params.
 
@@ -43,7 +45,7 @@ gofmt -l .                   # list unformatted files (should print nothing)
 go vet ./...                 # vet
 ```
 
-There is no test suite yet. Once `*_test.go` files exist: `go test ./...` for all, `go test -run TestName ./...` for one.
+`go test ./...` runs the tests; `go test -run TestName ./...` runs one. Coverage is thin — only the file-tool path sandbox is tested.
 
 Verification loop after a change: `gofmt -l . && go vet ./... && go build -o gai . && ./gai "Reply with exactly: pong"`. The last step makes a real, billed API call — it is the only way to confirm the client wiring works, but skip it for changes that can't affect the request path.
 

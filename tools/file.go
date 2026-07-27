@@ -1,0 +1,221 @@
+package tools
+
+import (
+	"encoding/json"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// maxFileSize caps how much of a file is handed to the model. Anything larger
+// is truncated rather than refused, since a partial read is usually enough to
+// answer a question and a whole file can swamp the context window.
+const maxFileSize = 64 << 10
+
+// denied are directories the tools refuse to touch, whatever the model asks.
+// secrets/ holds the API key, and .git/ is too easy to corrupt by hand.
+var denied = []string{"secrets", ".git"}
+
+// ReadFile returns the contents of a file under the working directory.
+var ReadFile = New(
+	"read_file",
+	"Read a text file and return its contents. Paths are relative to the working directory.",
+	pathSchema("Path of the file to read, relative to the working directory.", nil),
+	readFile,
+)
+
+// WriteFile creates or overwrites a file under the working directory.
+var WriteFile = New(
+	"write_file",
+	"Write text to a file, creating it if needed and replacing any existing contents. Paths are relative to the working directory.",
+	pathSchema("Path of the file to write, relative to the working directory.", map[string]any{
+		"content": map[string]any{
+			"type":        "string",
+			"description": "Full contents to write. Replaces the file entirely.",
+		},
+	}, "content"),
+	writeFile,
+)
+
+// ListFiles lists the entries of a directory under the working directory.
+var ListFiles = New(
+	"list_files",
+	"List the files and directories in a directory. Paths are relative to the working directory; omit the path to list the working directory itself.",
+	map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type":        "string",
+				"description": "Directory to list, relative to the working directory. Defaults to the working directory.",
+			},
+		},
+	},
+	listFiles,
+)
+
+// DeleteFile removes a file under the working directory.
+var DeleteFile = New(
+	"delete_file",
+	"Delete a file. This cannot be undone. Paths are relative to the working directory.",
+	pathSchema("Path of the file to delete, relative to the working directory.", nil),
+	deleteFile,
+)
+
+func readFile(args string) (string, error) {
+	p, err := pathArg(args)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory, use list_files", filepath.Base(p))
+	}
+
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	if len(b) > maxFileSize {
+		return string(b[:maxFileSize]) + fmt.Sprintf("\n\n[truncated, %d bytes total]", len(b)), nil
+	}
+	return string(b), nil
+}
+
+func writeFile(args string) (string, error) {
+	var p struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return "", err
+	}
+	path, err := resolve(p.Path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(p.Content), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil
+}
+
+func listFiles(args string) (string, error) {
+	var p struct {
+		Path string `json:"path"`
+	}
+	if args != "" {
+		if err := json.Unmarshal([]byte(args), &p); err != nil {
+			return "", err
+		}
+	}
+	if p.Path == "" {
+		p.Path = "."
+	}
+	dir, err := resolve(p.Path)
+	if err != nil {
+		return "", err
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() {
+			name += "/"
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return fmt.Sprintf("%s is empty", p.Path), nil
+	}
+	sort.Strings(names)
+	return strings.Join(names, "\n"), nil
+}
+
+func deleteFile(args string) (string, error) {
+	p, err := pathArg(args)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory; this tool only deletes files", filepath.Base(p))
+	}
+	if err := os.Remove(p); err != nil {
+		return "", err
+	}
+	return "deleted " + filepath.Base(p), nil
+}
+
+// pathSchema builds the JSON Schema for a tool whose only required argument is
+// a path, plus any extra properties it also requires.
+func pathSchema(description string, extra map[string]any, alsoRequired ...string) map[string]any {
+	props := map[string]any{
+		"path": map[string]any{
+			"type":        "string",
+			"description": description,
+		},
+	}
+	maps.Copy(props, extra)
+	return map[string]any{
+		"type":       "object",
+		"properties": props,
+		"required":   append([]string{"path"}, alsoRequired...),
+	}
+}
+
+// pathArg unmarshals the path argument shared by most of these tools and
+// resolves it against the working directory.
+func pathArg(args string) (string, error) {
+	var p struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return "", err
+	}
+	return resolve(p.Path)
+}
+
+// resolve turns a model-supplied path into an absolute one, rejecting anything
+// that reaches outside the working directory or into a denied directory. The
+// model chooses these paths from text it was given, so they are untrusted.
+func resolve(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("path must be relative to the working directory, got %q", path)
+	}
+
+	root, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	abs := filepath.Join(root, path)
+
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes the working directory: %q", path)
+	}
+	for _, dir := range denied {
+		if rel == dir || strings.HasPrefix(rel, dir+string(filepath.Separator)) {
+			return "", fmt.Errorf("%s/ is off limits", dir)
+		}
+	}
+	return abs, nil
+}

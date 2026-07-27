@@ -19,10 +19,16 @@ Course modules, in order, and where this port stands:
 | Evals | Scoring non-deterministic output | Not started |
 | Agent Loop | Multi-step reason/act until done | Done |
 | Multi-Turn Evals | System prompts, conversation scoring | Not started |
-| File System Tools | Read, write, list, delete | Not started |
+| File System Tools | Read, write, list, delete | Done |
 | Web Search & Context | Search plus window compaction | Not started |
 | Shell Tool | Sandboxed command execution | Not started |
 | Human Guidance | Approval flow before risky actions | Not started |
+
+## Tools
+
+The agent can call `current_datetime`, `read_file`, `write_file`, `list_files`, and `delete_file`.
+
+The file tools are confined to the working directory: absolute paths, paths escaping it, and anything under `secrets/` or `.git/` are refused. There is no approval prompt yet, so `write_file` and `delete_file` act immediately — run the agent somewhere you don't mind it editing.
 
 ## Telemetry
 
