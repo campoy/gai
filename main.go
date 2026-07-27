@@ -15,6 +15,10 @@ import (
 const (
 	apiKeyPath = "secrets/openai-api-key"
 	model      = openai.ChatModelGPT4oMini
+
+	// maxSteps bounds the agent loop so a model that keeps calling tools
+	// without ever answering can't run forever.
+	maxSteps = 10
 )
 
 // loadAPIKey reads the API key from a file containing nothing but the key.
@@ -53,24 +57,32 @@ func main() {
 		},
 	}
 
-	msg, err := complete(ctx, &client, params)
+	answer, err := run(ctx, &client, params)
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println(answer)
+}
 
-	if len(msg.ToolCalls) > 0 {
+// run drives the agent loop: ask the model, run whatever tools it requests,
+// feed the results back, and repeat until it answers without calling a tool.
+func run(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (string, error) {
+	for range maxSteps {
+		msg, err := complete(ctx, client, params)
+		if err != nil {
+			return "", err
+		}
+		if len(msg.ToolCalls) == 0 {
+			return msg.Content, nil
+		}
 		// The assistant turn that requested the tools has to go back too; a tool
 		// result without its call is rejected by the API.
 		params.Messages = append(params.Messages, msg.ToParam())
 		for _, tc := range msg.ToolCalls {
 			params.Messages = append(params.Messages, openai.ToolMessage(runTool(tc), tc.ID))
 		}
-		if msg, err = complete(ctx, &client, params); err != nil {
-			log.Fatal(err)
-		}
 	}
-
-	fmt.Println(msg.Content)
+	return "", fmt.Errorf("gave up after %d steps without a final answer", maxSteps)
 }
 
 // toolParams converts the tool registry into the schema the API advertises to

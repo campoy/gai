@@ -8,16 +8,16 @@ The goal is to build the agent from primitives rather than adopt a framework: a 
 
 ## Status
 
-Early. The CLI sends one prompt, runs any tools the model asks for, and prints the answer. There is no loop yet, so only a single round of tool calls is handled.
+Early. The CLI takes one prompt and loops — asking the model, running whatever tools it requests, feeding the results back — until it answers without calling a tool. There is no conversation across prompts yet.
 
 Course modules, in order, and where this port stands:
 
 | Module | Topic | Status |
 | --- | --- | --- |
 | Agent Basics | Single call to the model | Done |
-| Tool Calling | Model-invoked Go functions | Done — one round of calls |
+| Tool Calling | Model-invoked Go functions | Done |
 | Evals | Scoring non-deterministic output | Not started |
-| Agent Loop | Multi-step reason/act until done | Not started |
+| Agent Loop | Multi-step reason/act until done | Done |
 | Multi-Turn Evals | System prompts, conversation scoring | Not started |
 | File System Tools | Read, write, list, delete | Not started |
 | Web Search & Context | Search plus window compaction | Not started |
