@@ -1,4 +1,4 @@
-package main
+package evals
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/campoy/gai/agent"
 	"github.com/campoy/gai/telemetry"
 	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
@@ -21,6 +22,11 @@ import (
 //
 //	go test -run TestEval -eval .
 //	go test -run TestEval -eval -eval.runs=10 -v .
+
+// apiKeyPath is relative to this package's directory, which is where the test
+// binary runs, not the repo root.
+const apiKeyPath = "../secrets/openai-api-key"
+
 var (
 	evalEnabled = flag.Bool("eval", false, "run the evals, which make real API calls")
 	evalRuns    = flag.Int("eval.runs", 5, "how many times to run each eval case")
@@ -322,7 +328,7 @@ func TestEval(t *testing.T) {
 		t.Skip("evals make real API calls; pass -eval to run them")
 	}
 
-	apiKey, err := loadAPIKey(apiKeyPath)
+	apiKey, err := agent.LoadAPIKey(apiKeyPath)
 	if err != nil {
 		t.Fatalf("loading API key: %v", err)
 	}
@@ -393,18 +399,15 @@ func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error
 		}
 	}()
 
-	params := openai.ChatCompletionNewParams{
-		Model: model,
-		Tools: tools.All.AsToolParams(),
-		// Temperature 0 keeps the runs as comparable as the API allows. It does
-		// not make them identical, which is why cases are scored as a rate.
-		Temperature: openai.Float(0),
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(systemPrompt),
-			openai.UserMessage(c.prompt),
-		},
-	}
-	if _, err := run(context.Background(), client, &params); err != nil {
+	// Start from the parameters the CLI ships with, so a change to the model,
+	// the tool set or the system prompt is scored rather than sidestepped.
+	params := agent.Params()
+	// Temperature 0 keeps the runs as comparable as the API allows. It does not
+	// make them identical, which is why cases are scored as a rate.
+	params.Temperature = openai.Float(0)
+	params.Messages = append(params.Messages, openai.UserMessage(c.prompt))
+
+	if _, err := agent.Run(context.Background(), client, &params); err != nil {
 		return nil, err
 	}
 

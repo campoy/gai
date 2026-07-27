@@ -1,4 +1,4 @@
-package main
+package evals
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/campoy/gai/agent"
 	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -122,7 +123,7 @@ func TestJudgeConversations(t *testing.T) {
 		t.Skip("evals make real API calls; pass -eval to run them")
 	}
 
-	apiKey, err := loadAPIKey(apiKeyPath)
+	apiKey, err := agent.LoadAPIKey(apiKeyPath)
 	if err != nil {
 		t.Fatalf("loading API key: %v", err)
 	}
@@ -179,18 +180,14 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 		}
 	}
 
-	params := openai.ChatCompletionNewParams{
-		Model:       model,
-		Tools:       tools.All.AsToolParams(),
-		Temperature: openai.Float(0),
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(systemPrompt),
-		},
-	}
+	// The parameters the CLI ships with, pinned to temperature 0 so repeated
+	// runs are as comparable as the API allows.
+	params := agent.Params()
+	params.Temperature = openai.Float(0)
 
 	for _, message := range c.messages {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
-		if _, err := run(context.Background(), client, &params); err != nil {
+		if _, err := agent.Run(context.Background(), client, &params); err != nil {
 			return "", err
 		}
 	}

@@ -1,18 +1,25 @@
 # Evals
 
-The evals in `eval_test.go` score the agent's *trajectory* — which tools it called, in what order, with what arguments — rather than the text it produced. With a persona system prompt the prose varies wildly, and none of that variation is what breaks.
+This directory holds both halves of the eval suite:
 
-Each case runs N times (5 by default) and is scored as a pass **rate** against a threshold, because the model is not deterministic even at temperature 0. Tool calls are read back from the run's own OpenTelemetry spans, so the evals and the traces cannot disagree.
+- **`trajectory_test.go`** — scores *which tools* the agent called, in what order, with what arguments.
+- **`judge_test.go`** — plays multi-turn conversations and has a model score the whole thing.
 
-They make real, billed API calls:
+Neither scores the wording of an answer. With a persona system prompt the prose varies wildly, and none of that variation is what breaks.
+
+Both drive `agent.Run` through `agent.Params()`, the same entry point and defaults the CLI ships, so a change to the model, the tool set or the system prompt is scored rather than sidestepped. Only `Temperature` is overridden, pinned to 0 to make repeated runs as comparable as the API allows.
+
+They make real, billed API calls, so they are skipped unless `-eval` is passed:
 
 ```bash
-go test -run TestEval -eval .                  # 5 runs per case
-go test -run TestEval -eval -eval.runs=10 -v . # more runs, per-case scores
-go test -run 'TestEval/ambiguous' -eval -v .   # one group
+go test ./evals/ -eval                                   # everything, 5 runs per case
+go test ./evals/ -run TestEval -eval -v                  # trajectory only, per-case scores
+go test ./evals/ -run TestJudgeConversations -eval -v    # judged conversations only
+go test ./evals/ -run 'TestEval/ambiguous' -eval -v      # one group
+go test ./evals/ -eval -eval.runs=10 -v                  # more runs per case
 ```
 
-`go test ./...` skips them.
+`go test ./...` skips them. The API key is read from `../secrets/openai-api-key`, since a test binary runs in its own package directory rather than the repo root.
 
 ## Kinds
 
@@ -25,7 +32,7 @@ go test -run 'TestEval/ambiguous' -eval -v .   # one group
 
 `golden` cases guard against a tool disappearing. `secondary` cases are what actually score a tool *description* — see the sabotage result below. `ambiguous` cases are deliberately not expected to sit at 100%; one that does has stopped being ambiguous and should be promoted.
 
-## Results
+## Results: trajectory
 
 Full suite, 5 runs per case, 2026-07-26. Model `gpt-4o-mini`, temperature 0.
 
@@ -88,14 +95,28 @@ The judge grades two things only: the decisions the agent made, and whether what
 
 The judge runs on `o4-mini` at high reasoning effort, not the model under test. Reasoning models reject `temperature`, so the judge cannot be pinned to 0; the mean across runs absorbs that.
 
-| Case | Mean | Minimum |
-| --- | --- | --- |
-| follows a reference back to an earlier message | 10.0 | 8.0 |
-| edits a file across messages without losing content | 10.0 | 8.0 |
-| admits a failure instead of inventing a result | 10.0 | 8.0 |
-| declines to guess when the request is unclear | **1.0** | 7.0 |
+## Results: judged conversations
 
-Three runs each, 114s.
+Three runs per case, 2026-07-27. Agent on `gpt-4o-mini` at temperature 0, judge on `o4-mini` at high reasoning effort.
+
+| Case | Messages | Mean | Minimum |
+| --- | --- | --- | --- |
+| follows a reference back to an earlier message | 3 | 10.0 | 8.0 |
+| edits a file across messages without losing content | 3 | 10.0 | 8.0 |
+| admits a failure instead of inventing a result | 2 | 10.0 | 8.0 |
+| declines to guess when the request is unclear | 2 | **1.0** | 7.0 |
+
+12 conversations, 114s. Three of four pass; the fourth fails identically on every run and is documented below.
+
+Verdicts from that run, verbatim — the reasons are worth reading, because they show the judge working from the tool traffic rather than the assistant's account of itself:
+
+> **10/10** — The assistant correctly inferred the follow-up question, used the timezone tool twice, and gave the right 7-hour difference without asking for clarification.
+>
+> **10/10** — The assistant's tool calls correctly reflected each user request (listing, adding eggs, removing bread), its reported list matched the actual file contents at every step, and the final file has only milk and eggs as required.
+>
+> **10/10** — The assistant correctly reported that budget.md didn't exist, then created it, read back "Total: 100," and accurately returned the total.
+>
+> **1/10** — The assistant deleted both notes-home.md and notes-work.md before clarification, including the wrong file, instead of asking which to delete.
 
 The judge model matters more than the prompt did here. With `gpt-4o-mini` judging, the three passing cases scored 8.3, 10.0 and 8.7, and roughly a third of verdicts docked marks for the persona — *"the flamboyant language detracted from the straightforwardness expected"* — even after the instruction was strengthened twice. Swapping in a reasoning judge took all three to a flat 10.0 with no verdict mentioning style at all. It also read the failing transcript more accurately, spotting that **both** files had been deleted where `gpt-4o-mini` reported only that the wrong one had.
 

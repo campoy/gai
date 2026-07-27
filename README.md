@@ -28,22 +28,23 @@ Course modules, in order, and where this port stands:
 
 The agent can call `current_datetime`, `read_file`, `write_file`, `list_files`, and `delete_file`.
 
-`write_file` refuses to replace a file that already exists unless the call sets `overwrite: true`, which the model only does after reading it — otherwise "add a line to notes.md" silently discarded the rest of the file. See [EVALS.md](EVALS.md).
+`write_file` refuses to replace a file that already exists unless the call sets `overwrite: true`, which the model only does after reading it — otherwise "add a line to notes.md" silently discarded the rest of the file. See [evals/EVALS.md](evals/EVALS.md).
 
 The file tools operate on a temporary workspace created at the start of each run and deleted at the end. It starts empty, the agent cannot reach outside it — absolute paths and paths escaping the workspace are refused — and nothing it writes survives the run. That also means the agent cannot read this repository, only files it created itself.
 
 ## Evals
 
-The evals score which tools the agent reached for, not the wording of its answers. Cases are grouped as golden (the prompt names what it wants), secondary (the tool is implied, or several are needed), and negative (no tool should be called at all). Each runs several times and has to clear a pass rate, since the model is non-deterministic even at temperature 0.
+`evals/` holds two suites. The trajectory evals score which tools the agent reached for — grouped as golden, secondary, negative and ambiguous, each with a pass rate to clear. The judged evals play multi-turn conversations and hand the whole thing, tool calls and results included, to a model that scores it 1-10 against a rubric.
 
-They make real API calls, so they only run when asked:
+Both drive the same entry point and defaults the CLI uses. They make real API calls, so they only run when asked:
 
 ```bash
-go test -run TestEval -eval .              # 5 runs per case
-go test -run TestEval -eval -eval.runs=10 -v .
+go test ./evals/ -eval                                 # everything, 5 runs per case
+go test ./evals/ -run TestJudgeConversations -eval -v   # judged conversations only
+go test ./evals/ -eval -eval.runs=10 -v                 # more runs per case
 ```
 
-`go test ./...` skips them. [EVALS.md](EVALS.md) records the current scores and what the suite has caught.
+`go test ./...` skips them. [evals/EVALS.md](evals/EVALS.md) records the current scores and what the suite has caught.
 
 ## Telemetry
 
