@@ -51,12 +51,15 @@ func (ts Tools) AsToolParams() []openai.ChatCompletionToolParam {
 	return params
 }
 
-// All is every tool available to the agent.
-var All = Tools{DateTime, ReadFile, WriteFile, ListFiles, DeleteFile}
+// All returns every tool available to the agent. It takes a client because
+// web_search runs a model call of its own; the rest ignore it.
+func All(client *openai.Client) Tools {
+	return Tools{DateTime, ReadFile, WriteFile, ListFiles, DeleteFile, NewWebSearch(client)}
+}
 
-// ByName returns the tool registered under the given name.
-func ByName(name string) (Tool, bool) {
-	for _, t := range All {
+// ByName returns the tool in the set registered under the given name.
+func (ts Tools) ByName(name string) (Tool, bool) {
+	for _, t := range ts {
 		if t.Name == name {
 			return t, true
 		}

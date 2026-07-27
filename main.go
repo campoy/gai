@@ -62,14 +62,15 @@ func main() {
 	}()
 
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	params := agent.Params()
+	ag := agent.New(&client)
+	params := ag.Params()
 
 	// With a prompt on the command line, answer it and stop. With none, read
 	// one message per line until stdin closes, carrying the conversation from
 	// message to message.
 	if len(os.Args) > 1 {
 		params.Messages = append(params.Messages, openai.UserMessage(strings.Join(os.Args[1:], " ")))
-		answer, err := agent.Run(ctx, &client, &params)
+		answer, err := ag.Run(ctx, &params)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -77,7 +78,7 @@ func main() {
 		return
 	}
 
-	if err := chat(ctx, &client, os.Stdin, os.Stdout, &params); err != nil {
+	if err := chat(ctx, ag, os.Stdin, os.Stdout, &params); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -85,7 +86,7 @@ func main() {
 // chat reads a message per line and replies to each, keeping every turn in the
 // conversation so later messages can refer back to earlier ones. It returns
 // when stdin closes.
-func chat(ctx context.Context, client *openai.Client, in io.Reader, out io.Writer, params *openai.ChatCompletionNewParams) error {
+func chat(ctx context.Context, ag *agent.Agent, in io.Reader, out io.Writer, params *openai.ChatCompletionNewParams) error {
 	// Only prompt when someone is there to read it, so piping input in leaves
 	// the output clean.
 	prompt := func() {}
@@ -103,7 +104,7 @@ func chat(ctx context.Context, client *openai.Client, in io.Reader, out io.Write
 		}
 
 		params.Messages = append(params.Messages, openai.UserMessage(message))
-		answer, err := agent.Run(ctx, client, params)
+		answer, err := ag.Run(ctx, params)
 		if err != nil {
 			return err
 		}

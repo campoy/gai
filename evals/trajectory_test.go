@@ -217,6 +217,16 @@ var evalCases = []evalCase{
 		},
 	},
 	{
+		name:   "recent news needs a search",
+		kind:   secondary,
+		prompt: "What is the latest released version of the Go programming language?",
+		check: func(calls []toolCall) error {
+			// The honest answer is not in the model's weights: whatever version
+			// it remembers is the one that was current when it was trained.
+			return calledOnce(calls, "web_search", nil)
+		},
+	},
+	{
 		name:   "two cities in one question",
 		kind:   secondary,
 		prompt: "What time is it in Tokyo and in Madrid?",
@@ -251,6 +261,14 @@ var evalCases = []evalCase{
 		name:   "explaining a concept needs no tool",
 		kind:   negative,
 		prompt: "In one sentence, what is a goroutine?",
+		check:  noTools,
+	},
+	{
+		name: "settled facts are not searched",
+		kind: negative,
+		// Adding a search tool invites the model to reach for it constantly.
+		// This is the counterweight to "recent news needs a search".
+		prompt: "Who designed the Go programming language? Just the names.",
 		check:  noTools,
 	},
 
@@ -401,13 +419,14 @@ func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error
 
 	// Start from the parameters the CLI ships with, so a change to the model,
 	// the tool set or the system prompt is scored rather than sidestepped.
-	params := agent.Params()
+	ag := agent.New(client)
+	params := ag.Params()
 	// Temperature 0 keeps the runs as comparable as the API allows. It does not
 	// make them identical, which is why cases are scored as a rate.
 	params.Temperature = openai.Float(0)
 	params.Messages = append(params.Messages, openai.UserMessage(c.prompt))
 
-	if _, err := agent.Run(context.Background(), client, &params); err != nil {
+	if _, err := ag.Run(context.Background(), &params); err != nil {
 		return nil, err
 	}
 

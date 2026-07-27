@@ -18,19 +18,21 @@ The course order is Agent Basics → Tool Calling → Evals → Agent Loop → M
 
 ## Tools
 
-A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All` (a `tools.Tools`); `tools.ByName` does the lookup. Names are snake_case (`read_file`, `current_datetime`).
+A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All`, which builds the set; `Tools.ByName` does the lookup. Names are snake_case (`read_file`, `current_datetime`).
+
+`tools.All` takes an `*openai.Client` because `web_search` makes a model call of its own. A tool needing outside state closes over it at construction — `NewWebSearch(client)` — rather than reading a package-level variable set by an initializer. `agent.New` builds the set once and holds it.
 
 The file tools work in a temporary workspace, not the repository. `tools.NewWorkspace` creates it and returns a cleanup function; `main` calls it once per run, and each eval case calls it per run, deferring the cleanup, so the directory and everything in it is deleted on exit. The file tools fail until it has been called.
 
 Every file tool routes its path through `resolve` in `tools/file.go`, which rejects absolute paths and anything escaping the workspace. The model picks these paths out of untrusted text — never add a file tool that bypasses `resolve`, and keep the tests in `tools/file_test.go` passing.
 
-`Tool.AsToolParam` and `Tools.AsToolParams` convert the registry into the schema the SDK sends, so `agent.Params` passes `tools.All.AsToolParams()` straight to `Tools` on the request params.
+`Tool.AsToolParam` and `Tools.AsToolParams` convert the registry into the schema the SDK sends, so `Agent.Params` passes `Tools.AsToolParams()` straight to `Tools` on the request params.
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 
 ## The agent loop
 
-`agent.Run` takes `*openai.ChatCompletionNewParams` and appends every turn to it — the assistant message, any tool results, and the final answer. That is what makes the stdin mode a conversation rather than a series of unrelated questions, and what lets the evals transcribe the tool traffic, so don't switch it back to a value receiver.
+`agent.New(client)` returns an `*agent.Agent` holding the client and its tools; `Params` and `Run` are methods on it. `Run` takes `*openai.ChatCompletionNewParams` and appends every turn to it — the assistant message, any tool results, and the final answer. That is what makes the stdin mode a conversation rather than a series of unrelated questions, and what lets the evals transcribe the tool traffic, so don't switch it back to a value receiver.
 
 The loop lives in `agent/` rather than `main` so the evals can drive the code that ships. `agent.Params()` returns the model, tool set, tool choice and system prompt in one place; both the CLI and the evals start from it, the evals overriding only `Temperature`. Anything the agent runs with belongs there, not in `main`.
 
@@ -48,7 +50,7 @@ There is a fourth kind, `ambiguous` (40%), for prompts where another agent could
 
 Tool calls are read back from the run's own OpenTelemetry spans via `telemetry.WithExporter` and an in-memory exporter, so the evals and the traces agree by construction. `InMemoryExporter.Shutdown` discards its spans, so read them before shutting the provider down — that is why a custom exporter is wired as a syncer rather than a batcher.
 
-Evals go through `agent.Params()` and `agent.SystemPrompt`. Keep it that way: an eval against a prompt or a tool set that doesn't ship measures nothing.
+Evals go through `agent.New`, `Agent.Params` and `agent.SystemPrompt`. Keep it that way: an eval against a prompt or a tool set that doesn't ship measures nothing.
 
 ## Telemetry
 

@@ -20,13 +20,15 @@ Course modules, in order, and where this port stands:
 | Agent Loop | Multi-step reason/act until done | Done |
 | Multi-Turn Evals | System prompts, conversation scoring | Done |
 | File System Tools | Read, write, list, delete | Done |
-| Web Search & Context | Search plus window compaction | Not started |
+| Web Search & Context | Search plus window compaction | Search done, compaction not started |
 | Shell Tool | Sandboxed command execution | Not started |
 | Human Guidance | Approval flow before risky actions | Not started |
 
 ## Tools
 
-The agent can call `current_datetime`, `read_file`, `write_file`, `list_files`, and `delete_file`.
+The agent can call `current_datetime`, `web_search`, `read_file`, `write_file`, `list_files`, and `delete_file`.
+
+`web_search` uses OpenAI's hosted search: it sends the query to `gpt-4o-mini-search-preview` with `web_search_options` set, and returns the answer with its source URLs. The search models cannot call functions themselves, so they back a tool rather than running the agent.
 
 `write_file` refuses to replace a file that already exists unless the call sets `overwrite: true`, which the model only does after reading it — otherwise "add a line to notes.md" silently discarded the rest of the file. See [evals/EVALS.md](evals/EVALS.md).
 

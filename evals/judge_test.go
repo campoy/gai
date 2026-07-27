@@ -182,12 +182,13 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 
 	// The parameters the CLI ships with, pinned to temperature 0 so repeated
 	// runs are as comparable as the API allows.
-	params := agent.Params()
+	ag := agent.New(client)
+	params := ag.Params()
 	params.Temperature = openai.Float(0)
 
 	for _, message := range c.messages {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
-		if _, err := agent.Run(context.Background(), client, &params); err != nil {
+		if _, err := ag.Run(context.Background(), &params); err != nil {
 			return "", err
 		}
 	}
