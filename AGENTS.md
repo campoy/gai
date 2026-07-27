@@ -12,7 +12,7 @@ That framing drives most decisions here: **build from primitives, don't adopt an
 
 The course order is Agent Basics → Tool Calling → Evals → Agent Loop → Multi-Turn Evals → File System Tools → Web Search & Context Management → Shell Tool → Human Guidance & Approvals. The README tracks which modules are done; check it before assuming a capability exists.
 
-`main.go` holds the CLI and the OpenAI wiring; `tools/` holds the tool registry. No tests yet, no build tooling beyond the Go toolchain.
+`main.go` holds the CLI and the OpenAI wiring; `tools/` holds the tool registry; `telemetry/` holds the OpenTelemetry exporter and span helpers. No tests yet, no build tooling beyond the Go toolchain.
 
 **Check for existing code before writing new code.** Look through the packages and files already in the repo for a type, function, or registry that covers what you need, and extend or reuse it. Do not add a second implementation alongside one that already exists — this happened once with the datetime tool, which was written into `main.go` while `tools/datetime.go` already defined it.
 
@@ -23,6 +23,14 @@ A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments
 `Tool.AsToolParam` and `Tools.AsToolParams` convert the registry into the schema the SDK sends, so `main.go` passes `tools.All.AsToolParams()` straight to `Tools` on the request params.
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
+
+## Telemetry
+
+`telemetry.Init` installs a global tracer provider exporting OTLP/gRPC to `localhost:4317`; `telemetry.WithLaminar(key)` retargets it at lmnr.ai over TLS. It returns a shutdown function that must run before exit, since spans are batched — `main` bounds it with `flushTimeout` so a missing collector can't stall the program.
+
+Span attributes follow the OpenTelemetry GenAI conventions (`gen_ai.prompt.{i}.role`, `gen_ai.usage.input_tokens`, …) plus Laminar's `lmnr.span.type`. Keep new spans consistent with those names — Laminar renders spans based on them.
+
+To see traces locally, run Jaeger: `docker run --rm -p 16686:16686 -p 4317:4317 cr.jaegertracing.io/jaegertracing/jaeger:2.20.0`, UI at localhost:16686.
 
 ## Commands
 

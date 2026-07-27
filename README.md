@@ -24,7 +24,21 @@ Course modules, in order, and where this port stands:
 | Shell Tool | Sandboxed command execution | Not started |
 | Human Guidance | Approval flow before risky actions | Not started |
 
-The course covers telemetry with Laminar; the Go equivalent is undecided.
+## Telemetry
+
+Every run is traced with OpenTelemetry: one span for the agent loop, one per model call (carrying the prompt, the reply, and token usage), and one per tool call.
+
+Spans are exported over OTLP/gRPC to `localhost:4317` by default. Start a collector before running:
+
+```bash
+docker run --rm --name jaeger \
+  -p 16686:16686 -p 4317:4317 -p 4318:4318 \
+  cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
+```
+
+Traces then show up at [localhost:16686](http://localhost:16686). Without a collector the program still works — spans are dropped and a flush error is logged on exit.
+
+The course uses [Laminar](https://lmnr.ai); `telemetry.WithLaminar(apiKey)` points the exporter there instead. The span attributes follow the OpenTelemetry GenAI conventions plus Laminar's `lmnr.span.type`, so both backends render the traces sensibly.
 
 ## Usage
 

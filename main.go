@@ -6,7 +6,9 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/campoy/gai/telemetry"
 	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -19,6 +21,10 @@ const (
 	// maxSteps bounds the agent loop so a model that keeps calling tools
 	// without ever answering can't run forever.
 	maxSteps = 10
+
+	// flushTimeout caps how long the program waits for pending spans to reach
+	// the collector before exiting.
+	flushTimeout = 2 * time.Second
 )
 
 // loadAPIKey reads the API key from a file containing nothing but the key.
@@ -46,6 +52,22 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	shutdown, err := telemetry.Init(ctx)
+	if err != nil {
+		log.Fatalf("setting up telemetry: %v", err)
+	}
+	// Spans are batched, so they only reach the collector on shutdown. Bound the
+	// flush: with no collector listening the exporter otherwise retries until
+	// its own timeout, holding up an exit that has nothing left to do.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), flushTimeout)
+		defer cancel()
+		if err := shutdown(ctx); err != nil {
+			log.Printf("flushing telemetry: %v", err)
+		}
+	}()
+
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 
 	params := openai.ChatCompletionNewParams{
@@ -58,6 +80,7 @@ func main() {
 		ToolChoice: openai.ChatCompletionToolChoiceOptionUnionParam{
 			OfAuto: openai.String("auto"),
 		},
+		Temperature: openai.Float(1),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage("You are a sassy twink with a sharp wit. Slay, queen!"),
 			openai.UserMessage(prompt),
@@ -74,8 +97,13 @@ func main() {
 // run drives the agent loop: ask the model, run whatever tools it requests,
 // feed the results back, and repeat until it answers without calling a tool.
 func run(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (string, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "agent")
+	defer span.End()
+
 	for range maxSteps {
-		resp, err := client.Chat.Completions.New(ctx, params)
+		callCtx, callSpan := telemetry.StartLLM(ctx, params.Model, params.Messages)
+		resp, err := client.Chat.Completions.New(callCtx, params)
+		telemetry.EndLLM(callSpan, resp, err)
 		if err != nil {
 			return "", fmt.Errorf("calling API: %w", err)
 		}
@@ -91,7 +119,7 @@ func run(ctx context.Context, client *openai.Client, params openai.ChatCompletio
 		// result without its call is rejected by the API.
 		params.Messages = append(params.Messages, msg.ToParam())
 		for _, tc := range msg.ToolCalls {
-			params.Messages = append(params.Messages, openai.ToolMessage(runTool(tc), tc.ID))
+			params.Messages = append(params.Messages, openai.ToolMessage(runTool(ctx, tc), tc.ID))
 		}
 	}
 	return "", fmt.Errorf("gave up after %d steps without a final answer", maxSteps)
@@ -100,7 +128,10 @@ func run(ctx context.Context, client *openai.Client, params openai.ChatCompletio
 // runTool executes a tool call, returning failures as text so the model can
 // recover from them rather than the program exiting. Arguments are
 // model-generated JSON, so they may be malformed or contain undeclared fields.
-func runTool(tc openai.ChatCompletionMessageToolCall) string {
+func runTool(ctx context.Context, tc openai.ChatCompletionMessageToolCall) string {
+	_, span := telemetry.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
+	defer span.End()
+
 	t, ok := tools.ByName(tc.Function.Name)
 	if !ok {
 		return "error: unknown tool " + tc.Function.Name
