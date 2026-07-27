@@ -15,23 +15,43 @@ import (
 // answer a question and a whole file can swamp the context window.
 const maxFileSize = 64 << 10
 
-// denied are directories the tools refuse to touch, whatever the model asks.
-// secrets/ holds the API key, and .git/ is too easy to corrupt by hand.
-var denied = []string{"secrets", ".git"}
+// workspace is the temporary directory the file tools are confined to. It is
+// created by NewWorkspace at the start of a run and deleted at the end, so the
+// agent never touches the real file system and nothing it writes survives.
+var workspace string
 
-// ReadFile returns the contents of a file under the working directory.
+// NewWorkspace creates an empty temporary directory for the file tools to work
+// in and returns a function that deletes it along with everything in it. The
+// file tools fail until it has been called.
+func NewWorkspace() (cleanup func() error, err error) {
+	dir, err := os.MkdirTemp("", "gai-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating workspace: %w", err)
+	}
+	workspace = dir
+	return func() error {
+		workspace = ""
+		return os.RemoveAll(dir)
+	}, nil
+}
+
+// Workspace reports the directory the file tools operate in, or "" before
+// NewWorkspace has been called.
+func Workspace() string { return workspace }
+
+// ReadFile returns the contents of a file in the workspace.
 var ReadFile = New(
 	"read_file",
-	"Read a text file and return its contents. Paths are relative to the working directory.",
-	pathSchema("Path of the file to read, relative to the working directory.", nil),
+	"Read a text file and return its contents. Paths are relative to a temporary workspace that only exists for this conversation.",
+	pathSchema("Path of the file to read, relative to the workspace.", nil),
 	readFile,
 )
 
-// WriteFile creates or overwrites a file under the working directory.
+// WriteFile creates or overwrites a file in the workspace.
 var WriteFile = New(
 	"write_file",
-	"Write text to a file, creating it if needed and replacing any existing contents. Paths are relative to the working directory.",
-	pathSchema("Path of the file to write, relative to the working directory.", map[string]any{
+	"Write text to a file, creating it if needed and replacing any existing contents. Paths are relative to a temporary workspace that only exists for this conversation, so nothing written here is permanent.",
+	pathSchema("Path of the file to write, relative to the workspace.", map[string]any{
 		"content": map[string]any{
 			"type":        "string",
 			"description": "Full contents to write. Replaces the file entirely.",
@@ -40,27 +60,27 @@ var WriteFile = New(
 	writeFile,
 )
 
-// ListFiles lists the entries of a directory under the working directory.
+// ListFiles lists the entries of a directory in the workspace.
 var ListFiles = New(
 	"list_files",
-	"List the files and directories in a directory. Paths are relative to the working directory; omit the path to list the working directory itself.",
+	"List the files and directories in a directory. Paths are relative to a temporary workspace that only exists for this conversation; omit the path to list the workspace itself, which starts out empty.",
 	map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"path": map[string]any{
 				"type":        "string",
-				"description": "Directory to list, relative to the working directory. Defaults to the working directory.",
+				"description": "Directory to list, relative to the workspace. Defaults to the workspace root.",
 			},
 		},
 	},
 	listFiles,
 )
 
-// DeleteFile removes a file under the working directory.
+// DeleteFile removes a file from the workspace.
 var DeleteFile = New(
 	"delete_file",
-	"Delete a file. This cannot be undone. Paths are relative to the working directory.",
-	pathSchema("Path of the file to delete, relative to the working directory.", nil),
+	"Delete a file. This cannot be undone. Paths are relative to a temporary workspace that only exists for this conversation.",
+	pathSchema("Path of the file to delete, relative to the workspace.", nil),
 	deleteFile,
 )
 
@@ -97,6 +117,11 @@ func writeFile(args string) (string, error) {
 	}
 	path, err := resolve(p.Path)
 	if err != nil {
+		return "", err
+	}
+	// The workspace starts empty, so any subdirectory the model asks for has to
+	// be created here or every nested write fails.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(path, []byte(p.Content), 0o644); err != nil {
@@ -188,34 +213,27 @@ func pathArg(args string) (string, error) {
 	return resolve(p.Path)
 }
 
-// resolve turns a model-supplied path into an absolute one, rejecting anything
-// that reaches outside the working directory or into a denied directory. The
-// model chooses these paths from text it was given, so they are untrusted.
+// resolve turns a model-supplied path into an absolute one inside the
+// workspace, rejecting anything that reaches outside it. The model chooses
+// these paths from text it was given, so they are untrusted.
 func resolve(path string) (string, error) {
+	if workspace == "" {
+		return "", fmt.Errorf("no workspace: call NewWorkspace before using the file tools")
+	}
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(path) {
-		return "", fmt.Errorf("path must be relative to the working directory, got %q", path)
+		return "", fmt.Errorf("path must be relative to the workspace, got %q", path)
 	}
 
-	root, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	abs := filepath.Join(root, path)
-
-	rel, err := filepath.Rel(root, abs)
+	abs := filepath.Join(workspace, path)
+	rel, err := filepath.Rel(workspace, abs)
 	if err != nil {
 		return "", err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes the working directory: %q", path)
-	}
-	for _, dir := range denied {
-		if rel == dir || strings.HasPrefix(rel, dir+string(filepath.Separator)) {
-			return "", fmt.Errorf("%s/ is off limits", dir)
-		}
+		return "", fmt.Errorf("path escapes the workspace: %q", path)
 	}
 	return abs, nil
 }

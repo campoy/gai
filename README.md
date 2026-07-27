@@ -28,7 +28,7 @@ Course modules, in order, and where this port stands:
 
 The agent can call `current_datetime`, `read_file`, `write_file`, `list_files`, and `delete_file`.
 
-The file tools are confined to the working directory: absolute paths, paths escaping it, and anything under `secrets/` or `.git/` are refused. There is no approval prompt yet, so `write_file` and `delete_file` act immediately — run the agent somewhere you don't mind it editing.
+The file tools operate on a temporary workspace created at the start of each run and deleted at the end. It starts empty, the agent cannot reach outside it — absolute paths and paths escaping the workspace are refused — and nothing it writes survives the run. That also means the agent cannot read this repository, only files it created itself.
 
 ## Telemetry
 

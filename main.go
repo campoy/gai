@@ -68,6 +68,18 @@ func main() {
 		}
 	}()
 
+	// The file tools work in a throwaway directory, so nothing the agent writes
+	// outlives the run or touches the real file system.
+	cleanup, err := tools.NewWorkspace()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			log.Printf("removing workspace: %v", err)
+		}
+	}()
+
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 
 	params := openai.ChatCompletionNewParams{

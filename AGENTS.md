@@ -20,7 +20,9 @@ The course order is Agent Basics → Tool Calling → Evals → Agent Loop → M
 
 A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All` (a `tools.Tools`); `tools.ByName` does the lookup. Names are snake_case (`read_file`, `current_datetime`).
 
-Every file tool routes its path through `resolve` in `tools/file.go`, which rejects absolute paths, anything escaping the working directory, and the `denied` directories (`secrets/`, `.git/`). The model picks these paths out of untrusted text — never add a file tool that bypasses `resolve`, and keep `TestResolve` passing.
+The file tools work in a temporary workspace, not the repository. `tools.NewWorkspace` creates it and returns a cleanup function; `main` calls it once per run and defers the cleanup, so the directory and everything in it is deleted on exit. The file tools fail until it has been called.
+
+Every file tool routes its path through `resolve` in `tools/file.go`, which rejects absolute paths and anything escaping the workspace. The model picks these paths out of untrusted text — never add a file tool that bypasses `resolve`, and keep the tests in `tools/file_test.go` passing.
 
 `Tool.AsToolParam` and `Tools.AsToolParams` convert the registry into the schema the SDK sends, so `main.go` passes `tools.All.AsToolParams()` straight to `Tools` on the request params.
 
