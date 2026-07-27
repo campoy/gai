@@ -68,10 +68,15 @@ func main() {
 // feed the results back, and repeat until it answers without calling a tool.
 func run(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (string, error) {
 	for range maxSteps {
-		msg, err := complete(ctx, client, params)
+		resp, err := client.Chat.Completions.New(ctx, params)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("calling API: %w", err)
 		}
+		if len(resp.Choices) == 0 {
+			return "", fmt.Errorf("no choices returned")
+		}
+		msg := resp.Choices[0].Message
+
 		if len(msg.ToolCalls) == 0 {
 			return msg.Content, nil
 		}
@@ -99,18 +104,6 @@ func toolParams(ts []tools.Tool) []openai.ChatCompletionToolParam {
 		}
 	}
 	return params
-}
-
-// complete makes one request and returns the assistant message.
-func complete(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (openai.ChatCompletionMessage, error) {
-	resp, err := client.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return openai.ChatCompletionMessage{}, fmt.Errorf("calling API: %w", err)
-	}
-	if len(resp.Choices) == 0 {
-		return openai.ChatCompletionMessage{}, fmt.Errorf("no choices returned")
-	}
-	return resp.Choices[0].Message, nil
 }
 
 // runTool executes a tool call, returning failures as text so the model can
