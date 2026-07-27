@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -404,7 +405,9 @@ func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error
 			openai.UserMessage(c.prompt),
 		},
 	}
-	if _, err := run(context.Background(), client, params); err != nil {
+	// The evals score the trajectory, not the prose, so the streamed output goes
+	// nowhere.
+	if err := run(context.Background(), client, io.Discard, params); err != nil {
 		return nil, err
 	}
 

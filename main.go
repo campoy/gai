@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -103,33 +104,54 @@ func main() {
 		},
 	}
 
-	answer, err := run(ctx, &client, params)
-	if err != nil {
+	if err := run(ctx, &client, os.Stdout, params); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(answer)
 }
 
 // run drives the agent loop: ask the model, run whatever tools it requests,
 // feed the results back, and repeat until it answers without calling a tool.
-func run(ctx context.Context, client *openai.Client, params openai.ChatCompletionNewParams) (string, error) {
+// The model's prose is written to out as it arrives.
+func run(ctx context.Context, client *openai.Client, out io.Writer, params openai.ChatCompletionNewParams) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "agent")
 	defer span.End()
 
+	// Without this the usage chunk never arrives and every token count in the
+	// trace is zero. Set here rather than at the call sites so it cannot be
+	// forgotten.
+	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+		IncludeUsage: openai.Bool(true),
+	}
+
 	for range maxSteps {
 		callCtx, callSpan := telemetry.StartLLM(ctx, params.Model, params.Messages)
-		resp, err := client.Chat.Completions.New(callCtx, params)
-		telemetry.EndLLM(callSpan, resp, err)
+
+		// The accumulator reassembles the chunks into the same message shape the
+		// non-streaming call returns, which is what the loop and the span need.
+		// Only the content is printable as it arrives: tool call arguments
+		// stream in fragments and mean nothing until complete.
+		stream := client.Chat.Completions.NewStreaming(callCtx, params)
+		var acc openai.ChatCompletionAccumulator
+		for stream.Next() {
+			chunk := stream.Current()
+			acc.AddChunk(chunk)
+			if len(chunk.Choices) > 0 {
+				fmt.Fprint(out, chunk.Choices[0].Delta.Content)
+			}
+		}
+		err := stream.Err()
+		telemetry.EndLLM(callSpan, &acc.ChatCompletion, err)
 		if err != nil {
-			return "", fmt.Errorf("calling API: %w", err)
+			return fmt.Errorf("calling API: %w", err)
 		}
-		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("no choices returned")
+		if len(acc.Choices) == 0 {
+			return fmt.Errorf("no choices returned")
 		}
-		msg := resp.Choices[0].Message
+		msg := acc.Choices[0].Message
 
 		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
+			fmt.Fprintln(out)
+			return nil
 		}
 		// The assistant turn that requested the tools has to go back too; a tool
 		// result without its call is rejected by the API.
@@ -138,7 +160,7 @@ func run(ctx context.Context, client *openai.Client, params openai.ChatCompletio
 			params.Messages = append(params.Messages, openai.ToolMessage(runTool(ctx, tc), tc.ID))
 		}
 	}
-	return "", fmt.Errorf("gave up after %d steps without a final answer", maxSteps)
+	return fmt.Errorf("gave up after %d steps without a final answer", maxSteps)
 }
 
 // runTool executes a tool call, returning failures as text so the model can
