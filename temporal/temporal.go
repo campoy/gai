@@ -46,17 +46,17 @@ func defaultActivityOptions() workflow.ActivityOptions {
 	}
 }
 
-type completionRequest struct {
+type CompletionRequest struct {
 	Messages     []openai.ChatCompletionMessageParamUnion `json:"messages"`
 	WorkspaceDir string                                   `json:"workspace_dir"`
 }
 
-type completionResult struct {
+type CompletionResult struct {
 	Message *openai.ChatCompletionMessageParamUnion `json:"message"`
 	Usage   int64                                   `json:"usage"`
 }
 
-type toolInvocation struct {
+type ToolInvocation struct {
 	Name         string `json:"name"`
 	Arguments    string `json:"arguments"`
 	WorkspaceDir string `json:"workspace_dir"`
@@ -116,7 +116,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 
 	for range maxWorkflowSteps {
 		var result *completionResult
-		err := workflow.ExecuteActivity(activityCtx, ChatCompletionActivity, completionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
+		err := workflow.ExecuteActivity(activityCtx, ChatCompletionActivity, CompletionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
 		if err != nil {
 			return "", err
 		}
@@ -135,7 +135,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 
 		for _, tc := range assistant.ToolCalls {
 			var output string
-			err := workflow.ExecuteActivity(activityCtx, RunToolActivity, toolInvocation{Name: tc.Function.Name, Arguments: tc.Function.Arguments, WorkspaceDir: workspaceDir}).Get(ctx, &output)
+			err := workflow.ExecuteActivity(activityCtx, RunToolActivity, ToolInvocation{Name: tc.Function.Name, Arguments: tc.Function.Arguments, WorkspaceDir: workspaceDir}).Get(ctx, &output)
 			if err != nil {
 				messages = append(messages, openai.ToolMessage("error: "+err.Error(), tc.ID))
 				continue
@@ -148,7 +148,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 }
 
 // ChatCompletionActivity calls the OpenAI chat completions API from a Temporal activity.
-func ChatCompletionActivity(ctx context.Context, req completionRequest) (*completionResult, error) {
+func ChatCompletionActivity(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
 	if err := tools.SetWorkspace(req.WorkspaceDir); err != nil {
 		return nil, err
 	}
@@ -171,11 +171,11 @@ func ChatCompletionActivity(ctx context.Context, req completionRequest) (*comple
 	}
 
 	msg := resp.Choices[0].Message.ToParam()
-	return &completionResult{Message: &msg, Usage: resp.Usage.TotalTokens}, nil
+	return &CompletionResult{Message: &msg, Usage: resp.Usage.TotalTokens}, nil
 }
 
 // RunToolActivity invokes a registered tool from a Temporal activity.
-func RunToolActivity(ctx context.Context, req toolInvocation) (string, error) {
+func RunToolActivity(ctx context.Context, req ToolInvocation) (string, error) {
 	if err := tools.SetWorkspace(req.WorkspaceDir); err != nil {
 		return "", err
 	}
