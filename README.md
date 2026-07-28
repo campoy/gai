@@ -130,3 +130,12 @@ printf '%s' 'sk-...' > secrets/openai-api-key
 ## Requirements
 
 Go 1.26.5 or later.
+
+## Local validation
+
+The repository's CI runs a strict set of quality checks (gofmt, go vet, golint, staticcheck, tests and a build). To run the same checks locally, use the included helper:
+
+  make lint
+
+It installs golint and staticcheck if they are missing, then runs the same commands the CI uses. Use this before opening PRs so the CI run is more likely to pass on the first try.
+
