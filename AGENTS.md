@@ -97,8 +97,10 @@ The whole `secrets/` directory is gitignored. A live key was once committed and 
 
 - **Commit every large change.** Don't wait to be asked and don't ask for permission each time. A substantial unit of work — a feature, a refactor, a bug fix spanning files — gets its own commit with a descriptive message. Small tweaks and in-progress edits don't.
 - **Write a body, not just a subject.** Any commit worth making on its own gets a short paragraph explaining what changed and why — the reasoning that isn't visible in the diff. Trivial one-liners can stay subject-only.
-- **No attribution trailers.** Do not add `Co-Authored-By: Claude` or any other self-attribution. The history reads as the author's own.
-- **Commit directly to `main`.** Local-only repo, no remote, no feature branches.
+- **No self-attribution anywhere.** Not in commit messages — no `Co-Authored-By: Claude` or any other trailer — and not in pull request titles, bodies or comments: no "Generated with", no tool name, no badge, no emoji sign-off. This holds however the text was produced. The history and the PR queue read as the author's own work.
+- **Work on a feature branch, not `main`.** The repo has a remote — `origin`, `github.com/campoy/gai` — and changes land through a pull request. Branch before the first commit; if you notice you're already on `main` with work in progress, branch and carry it over rather than committing there.
+- **Open the PR when the work is done, not before.** Done means `gofmt -l .` silent, `go vet ./...` and `go test ./...` clean, and the docs in this file, the README and `evals/EVALS.md` updated in the same change. `gh pr create` with a body that explains the reasoning, not just the diff — and a section for what the reviewer should weigh: the trade-offs taken, what wasn't measured, and anything that contradicts a convention written down here.
+- **Push and open PRs only when asked.** Committing on a branch is local and cheap to undo; publishing to GitHub is neither. Ask first, every time — approval to open one PR is not approval for the next.
 - **Stage explicit paths** (`git add main.go`), not `git add -A` or `git add .`, so nothing under `secrets/` can slip in.
 
 ## SDK notes
