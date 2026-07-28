@@ -12,9 +12,12 @@ import (
 
 	"github.com/campoy/gai/agent"
 	"github.com/campoy/gai/telemetry"
+	gaitemporal "github.com/campoy/gai/temporal"
 	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	temporalclient "go.temporal.io/sdk/client"
+	temporalworker "go.temporal.io/sdk/worker"
 )
 
 const (
@@ -61,6 +64,26 @@ func main() {
 		}
 	}()
 
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "worker":
+			if err := runWorker(); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "temporal":
+			if len(os.Args) < 3 {
+				log.Fatalf("usage: %s temporal <prompt>", os.Args[0])
+			}
+			answer, err := runTemporal(ctx, strings.Join(os.Args[2:], " "))
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(answer)
+			return
+		}
+	}
+
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	ag := agent.New(&client)
 	params := ag.Params()
@@ -81,6 +104,35 @@ func main() {
 	if err := chat(ctx, ag, os.Stdin, os.Stdout, &params); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func runWorker() error {
+	w, err := gaitemporal.NewWorker("", "")
+	if err != nil {
+		return err
+	}
+	gaitemporal.Register(w)
+	return w.Run(temporalworker.InterruptCh())
+}
+
+func runTemporal(ctx context.Context, prompt string) (string, error) {
+	c, err := gaitemporal.NewClient("")
+	if err != nil {
+		return "", err
+	}
+	workflowID := fmt.Sprintf("gai-%d", time.Now().UnixNano())
+	we, err := c.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: gaitemporal.DefaultTaskQueue,
+	}, gaitemporal.ConversationWorkflow, prompt)
+	if err != nil {
+		return "", err
+	}
+	var answer string
+	if err := we.Get(ctx, &answer); err != nil {
+		return "", err
+	}
+	return answer, nil
 }
 
 // chat reads a message per line and replies to each, keeping every turn in the
