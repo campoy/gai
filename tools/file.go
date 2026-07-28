@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -88,7 +89,7 @@ var DeleteFile = New(
 	deleteFile,
 )
 
-func readFile(args string) (string, error) {
+func readFile(_ context.Context, args string) (string, error) {
 	p, err := pathArg(args)
 	if err != nil {
 		return "", err
@@ -111,7 +112,7 @@ func readFile(args string) (string, error) {
 	return string(b), nil
 }
 
-func writeFile(args string) (string, error) {
+func writeFile(_ context.Context, args string) (string, error) {
 	var p struct {
 		Path      string `json:"path"`
 		Content   string `json:"content"`
@@ -146,7 +147,7 @@ func writeFile(args string) (string, error) {
 	return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil
 }
 
-func listFiles(args string) (string, error) {
+func listFiles(_ context.Context, args string) (string, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
@@ -182,7 +183,7 @@ func listFiles(args string) (string, error) {
 	return strings.Join(names, "\n"), nil
 }
 
-func deleteFile(args string) (string, error) {
+func deleteFile(_ context.Context, args string) (string, error) {
 	p, err := pathArg(args)
 	if err != nil {
 		return "", err

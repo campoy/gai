@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -22,7 +23,7 @@ var DateTime = New(
 	dateTime,
 )
 
-func dateTime(args string) (string, error) {
+func dateTime(_ context.Context, args string) (string, error) {
 	var p struct {
 		Timezone string `json:"timezone"`
 	}

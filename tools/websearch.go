@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/campoy/gai/telemetry"
 	"github.com/openai/openai-go"
 )
 
@@ -36,11 +37,11 @@ func NewWebSearch(client *openai.Client) Tool {
 			},
 			"required": []string{"query"},
 		},
-		func(args string) (string, error) { return webSearch(client, args) },
+		func(ctx context.Context, args string) (string, error) { return webSearch(ctx, client, args) },
 	)
 }
 
-func webSearch(client *openai.Client, args string) (string, error) {
+func webSearch(ctx context.Context, client *openai.Client, args string) (string, error) {
 	var p struct {
 		Query string `json:"query"`
 	}
@@ -51,7 +52,7 @@ func webSearch(client *openai.Client, args string) (string, error) {
 		return "", fmt.Errorf("query is required")
 	}
 
-	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+	req := openai.ChatCompletionNewParams{
 		Model: searchModel,
 		// An empty options value is still what turns the search on: the field is
 		// omitzero, so leaving it out sends no web_search_options at all.
@@ -59,7 +60,13 @@ func webSearch(client *openai.Client, args string) (string, error) {
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage(p.Query),
 		},
-	})
+	}
+	// The context comes from the agent loop by way of the tool span, so this call
+	// is cancelled with the run it belongs to and shows up in the trace beneath
+	// the tool call that made it, rather than as a second root.
+	callCtx, span := telemetry.StartLLM(ctx, req.Model, req.Messages)
+	resp, err := client.Chat.Completions.New(callCtx, req)
+	telemetry.EndLLM(span, resp, err)
 	if err != nil {
 		return "", fmt.Errorf("searching: %w", err)
 	}

@@ -72,7 +72,7 @@ go test ./evals/ -eval -eval.runs=10 -v                 # more runs per case
 
 ## Telemetry
 
-Every run is traced with OpenTelemetry: one span for the agent loop, one per model call (carrying the prompt, the reply, and token usage), and one per tool call.
+Every run is traced with OpenTelemetry: one span for the agent loop, one per model call (carrying the prompt, the reply, and token usage), and one per tool call. Tools are handed the loop's context, so a tool that calls the model itself — `web_search` does — is traced beneath the tool call that made it, and is cancelled along with the run.
 
 Spans are exported over OTLP/gRPC to `localhost:4317` by default. Start a collector before running:
 

@@ -145,15 +145,19 @@ func (a *Agent) Run(ctx context.Context, params *openai.ChatCompletionNewParams)
 // runTool executes a tool call, returning failures as text so the model can
 // recover from them rather than the program exiting. Arguments are
 // model-generated JSON, so they may be malformed or contain undeclared fields.
+//
+// The tool is handed the context the span was started from, not the one that
+// came in: work a tool does of its own then belongs to the call in the trace,
+// and is cancelled along with the run.
 func (a *Agent) runTool(ctx context.Context, tc openai.ChatCompletionMessageToolCall) string {
-	_, span := telemetry.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
+	ctx, span := telemetry.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
 	defer span.End()
 
 	t, ok := a.tools.ByName(tc.Function.Name)
 	if !ok {
 		return "error: unknown tool " + tc.Function.Name
 	}
-	out, err := t.Func(tc.Function.Arguments)
+	out, err := t.Func(ctx, tc.Function.Arguments)
 	if err != nil {
 		return "error: " + err.Error()
 	}

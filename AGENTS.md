@@ -18,7 +18,9 @@ The course order is Agent Basics → Tool Calling → Evals → Agent Loop → M
 
 ## Tools
 
-A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking the call's raw JSON arguments. Register new ones in `tools.All`, which builds the set; `Tools.ByName` does the lookup. Names are snake_case (`read_file`, `current_datetime`).
+A tool is a `tools.Tool`: a name, a description, a JSON Schema for its arguments (`Parameters`, nil for none), and a `Func` taking a context and the call's raw JSON arguments. Register new ones in `tools.All`, which builds the set; `Tools.ByName` does the lookup. Names are snake_case (`read_file`, `current_datetime`).
+
+The context is the agent loop's, and `runTool` hands over the one `telemetry.StartTool` returned rather than the one it was given. A tool that makes a request of its own must pass it on — `web_search` does, so its nested model call is cancelled with the run and appears in the trace under the tool call that made it. Never substitute `context.Background()`: it was there before the signature had a context, and it made the search uncancellable and its span a second root. The file and datetime tools take the parameter as `_`, which is fine; a tool that does I/O and drops it is not. `agent/tool_test.go` pins both halves down.
 
 `tools.All` takes an `*openai.Client` because `web_search` makes a model call of its own. A tool needing outside state closes over it at construction — `NewWebSearch(client)` — rather than reading a package-level variable set by an initializer. `agent.New` builds the set once and holds it.
 
