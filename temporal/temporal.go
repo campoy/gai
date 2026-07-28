@@ -115,7 +115,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 	}
 
 	for range maxWorkflowSteps {
-		var result *completionResult
+		var result *CompletionResult
 		err := workflow.ExecuteActivity(activityCtx, ChatCompletionActivity, CompletionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
 		if err != nil {
 			return "", err
