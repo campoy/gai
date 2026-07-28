@@ -1,7 +1,11 @@
 // Tools contains utility functions for the application.
 package tools
 
-import "github.com/openai/openai-go"
+import (
+	"context"
+
+	"github.com/openai/openai-go"
+)
 
 // Tool represents a utility function with a name, description, and the function itself.
 type Tool struct {
@@ -15,7 +19,13 @@ type Tool struct {
 
 // Function defines the signature for utility functions that take the call's
 // arguments as JSON and return a string output along with an error.
-type Function func(args string) (string, error)
+//
+// The context is the one the agent loop is running under, carrying both its
+// deadline and the span of the tool call. A tool that does I/O of its own is
+// expected to pass it on: without it the work is uncancellable, and any span it
+// starts is a root rather than a child of the call that caused it. Tools that
+// only touch local state ignore it.
+type Function func(ctx context.Context, args string) (string, error)
 
 // New creates a new Tool instance with the provided name, description, parameter schema, and function.
 func New(name, description string, parameters map[string]any, fn Function) Tool {

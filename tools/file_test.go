@@ -45,11 +45,12 @@ func TestResolve(t *testing.T) {
 // progress and gone afterwards.
 func TestWorkspaceLifecycle(t *testing.T) {
 	newTestWorkspace(t)
+	ctx := t.Context()
 
-	if _, err := writeFile(`{"path":"notes/todo.md","content":"buy milk"}`); err != nil {
+	if _, err := writeFile(ctx, `{"path":"notes/todo.md","content":"buy milk"}`); err != nil {
 		t.Fatalf("writeFile: %v", err)
 	}
-	got, err := readFile(`{"path":"notes/todo.md"}`)
+	got, err := readFile(ctx, `{"path":"notes/todo.md"}`)
 	if err != nil {
 		t.Fatalf("readFile: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		t.Errorf("readFile = %q, want %q", got, "buy milk")
 	}
 
-	listing, err := listFiles(`{}`)
+	listing, err := listFiles(ctx, `{}`)
 	if err != nil {
 		t.Fatalf("listFiles: %v", err)
 	}
@@ -65,10 +66,10 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		t.Errorf("listFiles = %q, want %q", listing, "notes/")
 	}
 
-	if _, err := deleteFile(`{"path":"notes/todo.md"}`); err != nil {
+	if _, err := deleteFile(ctx, `{"path":"notes/todo.md"}`); err != nil {
 		t.Fatalf("deleteFile: %v", err)
 	}
-	if _, err := readFile(`{"path":"notes/todo.md"}`); err == nil {
+	if _, err := readFile(ctx, `{"path":"notes/todo.md"}`); err == nil {
 		t.Error("readFile succeeded after delete, want error")
 	}
 }
@@ -77,15 +78,16 @@ func TestWorkspaceLifecycle(t *testing.T) {
 // replacing a file it has not read.
 func TestWriteFileRefusesToClobber(t *testing.T) {
 	newTestWorkspace(t)
+	ctx := t.Context()
 
-	if _, err := writeFile(`{"path":"notes.md","content":"first"}`); err != nil {
+	if _, err := writeFile(ctx, `{"path":"notes.md","content":"first"}`); err != nil {
 		t.Fatalf("writing a new file: %v", err)
 	}
 
-	if _, err := writeFile(`{"path":"notes.md","content":"second"}`); err == nil {
+	if _, err := writeFile(ctx, `{"path":"notes.md","content":"second"}`); err == nil {
 		t.Error("overwrote an existing file without overwrite=true, want error")
 	}
-	got, err := readFile(`{"path":"notes.md"}`)
+	got, err := readFile(ctx, `{"path":"notes.md"}`)
 	if err != nil {
 		t.Fatalf("readFile: %v", err)
 	}
@@ -93,10 +95,10 @@ func TestWriteFileRefusesToClobber(t *testing.T) {
 		t.Errorf("contents = %q after a refused write, want %q", got, "first")
 	}
 
-	if _, err := writeFile(`{"path":"notes.md","content":"second","overwrite":true}`); err != nil {
+	if _, err := writeFile(ctx, `{"path":"notes.md","content":"second","overwrite":true}`); err != nil {
 		t.Fatalf("overwriting with overwrite=true: %v", err)
 	}
-	if got, _ := readFile(`{"path":"notes.md"}`); got != "second" {
+	if got, _ := readFile(ctx, `{"path":"notes.md"}`); got != "second" {
 		t.Errorf("contents = %q after an acknowledged write, want %q", got, "second")
 	}
 }

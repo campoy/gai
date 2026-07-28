@@ -134,7 +134,9 @@ func (a *Agent) Run(ctx context.Context, params *openai.ChatCompletionNewParams)
 
 ## 3. The tool registry
 
-A tool is a struct: name, description, a JSON Schema as `map[string]any`, and a `func(args string) (string, error)`. The registry is a plain slice with a linear `ByName` lookup. **The only thing linking a schema to its implementation is the name string** — there is no compile-time check that the advertised schema matches what the function unmarshals.
+A tool is a struct: name, description, a JSON Schema as `map[string]any`, and a `func(ctx context.Context, args string) (string, error)`. The registry is a plain slice with a linear `ByName` lookup. **The only thing linking a schema to its implementation is the name string** — there is no compile-time check that the advertised schema matches what the function unmarshals.
+
+The context is the loop's own, taken from the tool span rather than the message that started the step. Most tools ignore it — `os.ReadFile` has no use for one — but the ones that make a call of their own inherit both the run's deadline and its place in the trace by passing it on. `agent/tool_test.go` pins that down from the loop's side, because nothing in a tool's result reveals which context it ran under.
 
 | Tool | Arguments | Notable |
 | --- | --- | --- |
@@ -230,8 +232,9 @@ flowchart TD
   a["span: agent"] --> b1["span: chat gpt-4o-mini<br/>gen_ai.prompt.i.role/content<br/>gen_ai.usage.input/output_tokens"]
   a --> t1["span: tool read_file<br/>gen_ai.tool.name / .arguments"]
   a --> b2["span: chat gpt-4o-mini<br/>+ completion.i.tool_calls.j.name"]
-  a --> t2["span: tool write_file"]
-  a --> b3["span: chat gpt-4o-mini<br/>final answer, no tool calls"]
+  a --> t2["span: tool web_search"]
+  t2 --> b3["span: chat gpt-4o-mini-search-preview<br/>the tool's own model call"]
+  a --> b4["span: chat gpt-4o-mini<br/>final answer, no tool calls"]
 
   b1 -.-> exp{{"SpanExporter"}}
   t1 -.-> exp
@@ -289,14 +292,13 @@ See [evals/EVALS.md](evals/EVALS.md) for the full results tables and transcripts
 
 ## 7. Open edges
 
-Ordered by how much they constrain what comes next. The top three are known and documented in the repo; the bottom two were noticed while writing this document and are flagged as questions rather than defects.
+Ordered by how much they constrain what comes next. The top three are known and documented in the repo; the last was noticed while writing this document and is flagged as a question rather than a defect. A fourth — `web_search` calling `context.Background()` because the tool signature had no context to pass — is closed: the signature now takes one.
 
 | Edge | Where | Consequence | Status |
 | --- | --- | --- | --- |
 | No approval before irreversible actions | `tools/file.go` — `delete_file` | Asked to delete "my notes file" with two candidates, the agent listed both, saw the ambiguity, and deleted both — then treated the clarification as confirmation. Every individual call was valid; nothing asks first. | documented, unfixed |
 | No context-window compaction | `agent/agent.go` — `Run` | Messages only ever grow. A long stdin session, or a loop that hits `maxSteps`, resends the entire history every step. The course module covering this is half done (search yes, compaction no). | next module |
 | Binary only runs from the repo root | `main.go:22` | `apiKeyPath` is relative. The evals already work around it with `../secrets/…`. Adding a subcommand or moving the entry point breaks this first. | known |
-| `web_search` ignores the caller's context | `tools/websearch.go:54` | It calls `context.Background()`, because `tools.Function` is `func(string) (string, error)` with no ctx. The nested model call is therefore uncancellable and its span is not a child of the tool span. Threading ctx through the tool signature is the fix. | question |
 | The workspace is a package-level variable | `tools/file.go:21` | Process-global and not concurrency-safe, so two agents in one process share a workspace — mildly in tension with the reasoning that made `web_search` close over its client instead. Fine for a single-run CLI; worth revisiting if the evals ever parallelise. | question |
 
 ### Course modules
