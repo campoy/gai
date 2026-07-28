@@ -177,12 +177,12 @@ func TestCutPointKeepsHistoryValid(t *testing.T) {
 			kept := []openai.ChatCompletionMessageParamUnion{msgs[0], system("summary")}
 			kept = append(kept, msgs[cut:]...)
 
-			if err := validate(kept); err != nil {
+			if err := validateToolPairing(kept); err != nil {
 				t.Errorf("cut at %d left an invalid history: %v", cut, err)
 			}
 			// The dropped half has to stand on its own too — it is sent to the
 			// model to be summarised, and the same rules apply to that request.
-			if err := validate(msgs[1:cut]); err != nil {
+			if err := validateToolPairing(msgs[1:cut]); err != nil {
 				t.Errorf("cut at %d left an invalid stretch to summarise: %v", cut, err)
 			}
 		})
@@ -228,10 +228,14 @@ func TestCutPointKeepsTheRecentTurns(t *testing.T) {
 	}
 }
 
-// validate reports whether a message slice satisfies the API's pairing rules:
-// every tool result answers a call in the assistant message just before it, and
-// every call is answered.
-func validate(msgs []openai.ChatCompletionMessageParamUnion) error {
+// validateToolPairing reports whether a message slice pairs up tool calls and
+// their results the way the API insists on: every result answers a call in the
+// assistant message just before it, and every call is answered before the
+// conversation moves on.
+//
+// This is the rule a careless cut breaks, and the reason a bad cut does not
+// merely degrade the agent — the request is rejected outright.
+func validateToolPairing(msgs []openai.ChatCompletionMessageParamUnion) error {
 	outstanding := map[string]bool{}
 	for i, m := range msgs {
 		switch {
@@ -262,12 +266,12 @@ func validate(msgs []openai.ChatCompletionMessageParamUnion) error {
 	return nil
 }
 
-// TestValidateCatchesABadCut guards the guard: a validator that accepts
+// TestValidateToolPairingCatchesABadCut guards the guard: a check that accepts
 // anything would make the tests above pass no matter what cutPoint did.
 //
 // Cutting at a tool result is the mistake to catch. It leaves an answer to a
 // call that is no longer in the history, which the API rejects outright.
-func TestValidateCatchesABadCut(t *testing.T) {
+func TestValidateToolPairingCatchesABadCut(t *testing.T) {
 	msgs := conversation(turn("one", "a"), turn("two", "b"))
 
 	var checked int
@@ -277,7 +281,7 @@ func TestValidateCatchesABadCut(t *testing.T) {
 		}
 		checked++
 		kept := append([]openai.ChatCompletionMessageParamUnion{msgs[0]}, msgs[cut:]...)
-		if err := validate(kept); err == nil {
+		if err := validateToolPairing(kept); err == nil {
 			t.Errorf("cutting at %d (a tool result) should have been rejected", cut)
 		}
 	}
