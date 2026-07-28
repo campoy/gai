@@ -46,16 +46,26 @@ func defaultActivityOptions() workflow.ActivityOptions {
 	}
 }
 
+// CompletionRequest is the payload used to ask the chat completion activity
+// for a single agent turn. WorkspaceDir is passed explicitly so activities can
+// set up their own ephemeral workspace without embedding secrets in workflow
+// history.
 type CompletionRequest struct {
 	Messages     []openai.ChatCompletionMessageParamUnion `json:"messages"`
 	WorkspaceDir string                                   `json:"workspace_dir"`
 }
 
+// CompletionResult is the activity response returned by the chat completion
+// activity. It carries the assistant message (as a param union) and token
+// usage so the workflow can make compaction decisions if needed.
 type CompletionResult struct {
 	Message *openai.ChatCompletionMessageParamUnion `json:"message"`
 	Usage   int64                                   `json:"usage"`
 }
 
+// ToolInvocation is the payload used to run a single tool activity. The
+// WorkspaceDir field lets the caller request the tool execute in the same
+// ephemeral directory used by the overall run.
 type ToolInvocation struct {
 	Name         string `json:"name"`
 	Arguments    string `json:"arguments"`
