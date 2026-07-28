@@ -4,3 +4,6 @@ secrets/
 # Go build artifacts
 /gai
 *.exe
+
+# Lavish Editor review artifacts — scratch HTML, not source
+.lavish/
