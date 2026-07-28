@@ -79,9 +79,12 @@ go build -o gai .            # build
 ./gai "your prompt here"     # run; args are joined into the prompt, stdin if none
 go run . "your prompt here"  # build and run in one step
 
+gofmt -w main.go agent/*.go tools/*.go   # format the files you've changed
 gofmt -l .                   # list unformatted files (should print nothing)
 go vet ./...                 # vet
 ```
+
+Before marking a change ready for review, run the standard Go toolchain checks on the repo: `gofmt` for the changed files, `go vet ./...`, `go test ./...`, and `go build -o gai .`. Prefer modern Go constructs when they are clear and idiomatic, but keep the code simple and explicit.
 
 `go test ./...` runs the tests; `go test -run TestName ./...` runs one. What is covered without spending an API call: the file-tool path sandbox (`tools/file_test.go`), the compaction cut rule and its tool pairing (`agent/compact_test.go`), the loop end to end against an `httptest` stub (`agent/run_test.go`), and the context a tool is handed (`agent/tool_test.go`). Everything about how the model behaves is in `evals/`, and is billed.
 

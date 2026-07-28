@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/campoy/gai/agent"
+	"github.com/campoy/gai/tools"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
@@ -17,6 +21,26 @@ const (
 	// DefaultTaskQueue is the task queue used when the CLI does not override it.
 	DefaultTaskQueue = "gai"
 )
+
+const maxWorkflowSteps = 10
+
+const apiKeyEnvName = "GAI_API_KEY"
+
+type completionRequest struct {
+	Messages     []openai.ChatCompletionMessageParamUnion `json:"messages"`
+	WorkspaceDir string                                   `json:"workspace_dir"`
+}
+
+type completionResult struct {
+	Message *openai.ChatCompletionMessageParamUnion `json:"message"`
+	Usage   int64                                   `json:"usage"`
+}
+
+type toolInvocation struct {
+	Name         string `json:"name"`
+	Arguments    string `json:"arguments"`
+	WorkspaceDir string `json:"workspace_dir"`
+}
 
 // NewClient creates a Temporal client for the configured host and port.
 func NewClient(hostPort string) (client.Client, error) {
@@ -41,23 +65,108 @@ func NewWorker(hostPort, taskQueue string) (worker.Worker, error) {
 	return worker.New(c, taskQueue, worker.Options{}), nil
 }
 
-// Register wires the workflow and activity into a Temporal worker.
+// Register wires the workflow and activities into a Temporal worker.
 func Register(w worker.Worker) {
-	w.RegisterWorkflow(ConversationWorkflow)
-	w.RegisterActivity(EchoActivity)
+	w.RegisterWorkflow(AgentWorkflow)
+	w.RegisterActivity(ChatCompletionActivity)
+	w.RegisterActivity(RunToolActivity)
 }
 
-// ConversationWorkflow executes the simple echo activity.
-func ConversationWorkflow(ctx workflow.Context, prompt string) (string, error) {
-	var answer string
-	err := workflow.ExecuteActivity(ctx, EchoActivity, prompt).Get(ctx, &answer)
+// ConfigureAPIKey stores the API key used by the Temporal worker activities.
+func ConfigureAPIKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("api key is required")
+	}
+	return os.Setenv(apiKeyEnvName, key)
+}
+
+// APIKey returns the API key currently configured for the worker activities.
+func APIKey() string {
+	return os.Getenv(apiKeyEnvName)
+}
+
+// AgentWorkflow drives the agent loop through Temporal activities.
+func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, error) {
+	messages := []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(agent.SystemPrompt),
+		openai.UserMessage(prompt),
+	}
+
+	for range maxWorkflowSteps {
+		var result *completionResult
+		err := workflow.ExecuteActivity(ctx, ChatCompletionActivity, completionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
+		if err != nil {
+			return "", err
+		}
+		if result == nil || result.Message == nil {
+			return "", fmt.Errorf("chat completion activity returned no message")
+		}
+		messages = append(messages, *result.Message)
+
+		assistant := result.Message.OfAssistant
+		if assistant == nil {
+			return "", fmt.Errorf("expected assistant message")
+		}
+		if len(assistant.ToolCalls) == 0 {
+			return assistant.Content.OfString.Or(""), nil
+		}
+
+		for _, tc := range assistant.ToolCalls {
+			var output string
+			err := workflow.ExecuteActivity(ctx, RunToolActivity, toolInvocation{Name: tc.Function.Name, Arguments: tc.Function.Arguments, WorkspaceDir: workspaceDir}).Get(ctx, &output)
+			if err != nil {
+				messages = append(messages, openai.ToolMessage("error: "+err.Error(), tc.ID))
+				continue
+			}
+			messages = append(messages, openai.ToolMessage(output, tc.ID))
+		}
+	}
+
+	return "", fmt.Errorf("gave up after %d steps without a final answer", maxWorkflowSteps)
+}
+
+// ChatCompletionActivity calls the OpenAI chat completions API from a Temporal activity.
+func ChatCompletionActivity(ctx context.Context, req completionRequest) (*completionResult, error) {
+	if err := tools.SetWorkspace(req.WorkspaceDir); err != nil {
+		return nil, err
+	}
+	key := APIKey()
+	if key == "" {
+		return nil, fmt.Errorf("missing API key")
+	}
+
+	client := openai.NewClient(option.WithAPIKey(key))
+	ag := agent.New(&client)
+	params := ag.Params()
+	params.Messages = req.Messages
+
+	resp, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no choices returned")
+	}
+
+	msg := resp.Choices[0].Message.ToParam()
+	return &completionResult{Message: &msg, Usage: resp.Usage.TotalTokens}, nil
+}
+
+// RunToolActivity invokes a registered tool from a Temporal activity.
+func RunToolActivity(ctx context.Context, req toolInvocation) (string, error) {
+	if err := tools.SetWorkspace(req.WorkspaceDir); err != nil {
 		return "", err
 	}
-	return answer, nil
-}
+	key := APIKey()
+	if key == "" {
+		return "", fmt.Errorf("missing API key")
+	}
 
-// EchoActivity returns a Temporal echo response for the supplied prompt.
-func EchoActivity(ctx context.Context, prompt string) (string, error) {
-	return fmt.Sprintf("temporal echo: %s", prompt), nil
+	client := openai.NewClient(option.WithAPIKey(key))
+	toolsSet := tools.All(&client)
+	tool, ok := toolsSet.ByName(req.Name)
+	if !ok {
+		return "", fmt.Errorf("unknown tool %s", req.Name)
+	}
+	return tool.Func(ctx, req.Arguments)
 }
