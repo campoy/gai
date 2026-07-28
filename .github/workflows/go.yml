@@ -18,11 +18,9 @@ jobs:
 
     steps:
       - name: Check out code
-        # Update to the latest major to pick up runners that target Node.js 24
         uses: actions/checkout@v5
 
       - name: Set up Go
-        # Use the next major setup-go which targets newer Node runtimes
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
