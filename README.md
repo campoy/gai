@@ -26,6 +26,8 @@ Course modules, in order, and where this port stands:
 
 [ARCHITECTURE.md](ARCHITECTURE.md) covers how the pieces fit together — the loop, the tool registry, the workspace sandbox, compaction and the two eval suites — with diagrams and the open edges left over.
 
+The current design work for moving the agent loop onto Temporal lives in [design/temporal-migration-plan.md](design/temporal-migration-plan.md). It captures the implementation phases, the risks and the verification milestones for the migration.
+
 ## Tools
 
 The agent can call `current_datetime`, `web_search`, `read_file`, `write_file`, `list_files`, and `delete_file`.
@@ -111,6 +113,8 @@ Input can be piped, in which case the `>` prompt is omitted:
 ```bash
 printf 'Create a.txt saying hello\nWhat files do I have?\n' | ./gai
 ```
+
+The Temporal scaffold is available as a pair of subcommands for the first migration phase. Start a worker with `./gai worker` and trigger a workflow with `./gai temporal "hello"` once a Temporal dev server is running on `127.0.0.1:7233`.
 
 ## Configuration
 
