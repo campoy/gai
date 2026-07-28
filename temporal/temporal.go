@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/campoy/gai/agent"
 	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 )
@@ -22,9 +24,27 @@ const (
 	DefaultTaskQueue = "gai"
 )
 
-const maxWorkflowSteps = 10
+const (
+	maxWorkflowSteps = 10
+
+	activityStartToCloseTimeout = 5 * time.Minute
+)
 
 const apiKeyEnvName = "GAI_API_KEY"
+
+var defaultActivityRetryPolicy = &temporal.RetryPolicy{
+	InitialInterval:    time.Second,
+	BackoffCoefficient: 2.0,
+	MaximumInterval:    30 * time.Second,
+	MaximumAttempts:    3,
+}
+
+func defaultActivityOptions() workflow.ActivityOptions {
+	return workflow.ActivityOptions{
+		StartToCloseTimeout: activityStartToCloseTimeout,
+		RetryPolicy:         defaultActivityRetryPolicy,
+	}
+}
 
 type completionRequest struct {
 	Messages     []openai.ChatCompletionMessageParamUnion `json:"messages"`
@@ -87,6 +107,8 @@ func APIKey() string {
 
 // AgentWorkflow drives the agent loop through Temporal activities.
 func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, error) {
+	activityCtx := workflow.WithActivityOptions(ctx, defaultActivityOptions())
+
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(agent.SystemPrompt),
 		openai.UserMessage(prompt),
@@ -94,7 +116,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 
 	for range maxWorkflowSteps {
 		var result *completionResult
-		err := workflow.ExecuteActivity(ctx, ChatCompletionActivity, completionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
+		err := workflow.ExecuteActivity(activityCtx, ChatCompletionActivity, completionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
 		if err != nil {
 			return "", err
 		}
@@ -113,7 +135,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 
 		for _, tc := range assistant.ToolCalls {
 			var output string
-			err := workflow.ExecuteActivity(ctx, RunToolActivity, toolInvocation{Name: tc.Function.Name, Arguments: tc.Function.Arguments, WorkspaceDir: workspaceDir}).Get(ctx, &output)
+			err := workflow.ExecuteActivity(activityCtx, RunToolActivity, toolInvocation{Name: tc.Function.Name, Arguments: tc.Function.Arguments, WorkspaceDir: workspaceDir}).Get(ctx, &output)
 			if err != nil {
 				messages = append(messages, openai.ToolMessage("error: "+err.Error(), tc.ID))
 				continue

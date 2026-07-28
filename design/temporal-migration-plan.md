@@ -53,7 +53,7 @@ Goal: ensure the new path is durable and replay-safe.
 
 - [ ] Add a replay test using `worker.WorkflowReplayer` on a recorded history.
 - [ ] Add tests for deterministic compaction and tool pairing in the workflow path.
-- [ ] Decide and document the retry policy for model and tool activities.
+- [x] Decide and document the retry policy for model and tool activities.
 - [ ] Decide and document the workspace persistence strategy (ephemeral session worker vs durable state).
 
 Exit criteria:
