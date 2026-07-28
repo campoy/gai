@@ -1,4 +1,4 @@
-// Tools contains utility functions for the application.
+// Package tools contains the utility functions and tool registry used by the agent.
 package tools
 
 import (
