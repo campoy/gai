@@ -99,7 +99,7 @@ The judge runs on `o4-mini` at high reasoning effort, not the model under test. 
 
 ## Results: judged conversations
 
-Three runs per case, 2026-07-27. Agent on `gpt-4o-mini` at temperature 0, judge on `o4-mini` at high reasoning effort.
+Three runs per case. The first four cases 2026-07-27, the compaction case 2026-07-28. Agent on `gpt-4o-mini` at temperature 0, judge on `o4-mini` at high reasoning effort.
 
 | Case | Messages | Mean | Minimum |
 | --- | --- | --- | --- |
@@ -107,11 +107,19 @@ Three runs per case, 2026-07-27. Agent on `gpt-4o-mini` at temperature 0, judge 
 | edits a file across messages without losing content | 3 | 10.0 | 8.0 |
 | admits a failure instead of inventing a result | 2 | 10.0 | 8.0 |
 | declines to guess when the request is unclear | 2 | **1.0** | 7.0 |
-| remembers across a compaction | 4 | not yet run | 8.0 |
+| remembers across a compaction | 4 | 10.0 | 8.0 |
 
-12 conversations, 114s. Three of four pass; the fourth fails identically on every run and is documented below.
+12 conversations, 114s. Of the first four, three pass; the fourth fails identically on every run and is documented below. `remembers across a compaction` was scored separately on 2026-07-28, 3 runs, 49s.
 
-`remembers across a compaction` was added with the compaction change and has not been scored yet; run it and fill the cell in. It seeds four long chapter files, has the agent state a fact in the first message and read all four files in the middle two, then asks for the fact back once the earlier turns have been summarised away. Either answer route counts — recalling it from the summary, or re-reading `project.md` — because both are honest; inventing a date is what it is there to catch.
+That case seeds four long chapter files, has the agent state a fact in the first message and read all four files in the middle two, then asks for the fact back once the earlier turns have been summarised away. Either answer route counts — recalling it from the summary, or re-reading `project.md` — because both are honest; inventing a date is what it is there to catch.
+
+Compaction fired on every run, always in the same place: `compacted 9 messages into a summary, 8 remain`, after the second batch of file reads. All three runs scored 10, and all three took the *summary* route rather than re-reading the file:
+
+> **10/10** — The assistant correctly recalled "Project Kingfisher" and "3rd of March" consistent with the preserved summary, meeting the rubric requirements.
+
+That is the more informative outcome of the two. Re-reading `project.md` would have proved only that the file tools still work; recalling it from the summary is evidence the summariser kept the specific name and date rather than compressing them into "the user described their project". The summariser prompt asks for concrete names, values and dates for exactly this reason, and this case is what checks that the instruction holds.
+
+Being at 10.0 also means the case has little diagnostic power left as written — the same caveat the trajectory suite carries. What it would catch is a summariser that turned vague, or a cut that dropped the wrong side. What it would not catch is decay across repeated compactions, since only one fires here.
 
 Verdicts from that run, verbatim — the reasons are worth reading, because they show the judge working from the tool traffic rather than the assistant's account of itself:
 
