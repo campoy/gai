@@ -75,7 +75,7 @@ func main() {
 			if len(os.Args) < 3 {
 				log.Fatalf("usage: %s temporal <prompt>", os.Args[0])
 			}
-			answer, err := runTemporal(ctx, strings.Join(os.Args[2:], " "))
+			answer, err := runTemporal(ctx, apiKey, strings.Join(os.Args[2:], " "))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -115,7 +115,7 @@ func runWorker() error {
 	return w.Run(temporalworker.InterruptCh())
 }
 
-func runTemporal(ctx context.Context, prompt string) (string, error) {
+func runTemporal(ctx context.Context, apiKey, prompt string) (string, error) {
 	c, err := gaitemporal.NewClient("")
 	if err != nil {
 		return "", err
@@ -124,7 +124,7 @@ func runTemporal(ctx context.Context, prompt string) (string, error) {
 	we, err := c.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
 		ID:        workflowID,
 		TaskQueue: gaitemporal.DefaultTaskQueue,
-	}, gaitemporal.ConversationWorkflow, prompt)
+	}, gaitemporal.AgentWorkflow, apiKey, prompt)
 	if err != nil {
 		return "", err
 	}
