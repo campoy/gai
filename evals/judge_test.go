@@ -129,16 +129,21 @@ notes-home.md untouched.`,
 		name: "remembers across a compaction",
 		seed: filler(map[string]string{}),
 		messages: []string{
-			"My project is codenamed Kingfisher and it ships on the 3rd of March. Write exactly that into project.md.",
+			"My project is codenamed Kingfisher and it ships on the 3rd of March 2027. Write exactly that into project.md.",
 			"Now read chapter-1.txt and chapter-2.txt and tell me roughly how long each one is.",
 			"Read chapter-3.txt and chapter-4.txt too, same question.",
 			"Remind me what my project is called and when it ships.",
 		},
 		rubric: `The chapter files are long, so by the last message the earlier turns have been replaced
 by a summary — the assistant cannot see the first exchange any more. The final reply must still say
-Kingfisher and the 3rd of March, either because the summary preserved them or because the assistant
-re-read project.md. Both are correct; re-reading is not a fault. Score 1 to 3 if it gives a different
-name or date, invents one, or claims it cannot know while project.md sits in the workspace unread.`,
+Kingfisher and 3 March 2027, either because the summary preserved them or because the assistant re-read
+project.md. Both are correct; re-reading is not a fault.
+
+Check the date in full, including the year. Score 1 to 3 if any part of it is wrong or invented, if the
+name is wrong, or if it claims it cannot know while project.md sits in the workspace unread. A reply
+that gives the day and month but a different year is stating something the user never said, and scores
+in that band; one that gives day and month and omits the year entirely is merely incomplete, and scores
+6 to 7.`,
 		minScore:        8,
 		needsCompaction: true,
 	},
@@ -149,17 +154,21 @@ name or date, invents one, or claims it cannot know while project.md sits in the
 		name: "keeps the corrected value, not the first one",
 		seed: filler(map[string]string{}),
 		messages: []string{
-			"My project is codenamed Kingfisher and it ships on the 3rd of March.",
-			"Correction: the date slipped. It ships on the 17th of March now, not the 3rd.",
+			"My project is codenamed Kingfisher and it ships on the 3rd of March 2027.",
+			"Correction: the date slipped. It ships on the 17th of March 2027 now, not the 3rd.",
 			"Now read chapter-1.txt and chapter-2.txt and tell me roughly how long each one is.",
 			"Read chapter-3.txt and chapter-4.txt too, same question.",
 			"When does Kingfisher ship?",
 		},
-		rubric: `The ship date was given as the 3rd of March and then corrected to the 17th, both before
+		rubric: `The ship date was given as 3 March 2027 and then corrected to 17 March 2027, both before
 the conversation grew long enough to be summarised. Neither date is written to any file, so the summary
-is the only place the answer can come from. The final reply must say the 17th of March. Score 1 to 3 if
-it says the 3rd, which is the stale value, and 4 to 6 if it offers both dates without making clear that
-the 17th is the current one. Asking the user to confirm is better than asserting the wrong date.`,
+is the only place the answer can come from.
+
+The final reply must say 17 March 2027. Check the date in full, including the year, and treat any part
+of it that the user never said as invented. Score 1 to 3 if it says the 3rd, which is the stale value,
+or if it gives a year other than 2027. Score 4 to 6 if it offers both dates without making clear that
+the 17th is the current one, and 6 to 7 if it gives day and month but drops the year. Asking the user
+to confirm is better than asserting a date it is not sure of.`,
 		minScore:        8,
 		needsCompaction: true,
 	},

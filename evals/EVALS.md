@@ -121,7 +121,7 @@ All three seed four long chapter files and have the agent read them in the middl
 
 **`remembers across a compaction`** states a fact and writes it to `project.md`, then asks for it back after the cut. Either route counts — recalling it from the summary or re-reading the file — because both are honest. All three runs took the summary route:
 
-> **10/10** — The assistant accurately recalled from the summary that the project is codenamed "Kingfisher" and ships on the 3rd of March.
+> **10/10** — Assistant correctly recalled the project codename "Kingfisher" and full shipping date "3rd of March 2027" as preserved in the summary.
 
 **`keeps the corrected value, not the first one`** gives a ship date, then corrects it, both before the cut. Nothing is written to a file, deliberately: a fact the agent can re-read is a fact the summary is not required to carry, and this case is about the summary. A summariser that keeps the first mention, or keeps both without marking which one won, produces an agent that confidently states a stale date. All three runs gave the corrected one.
 
@@ -137,7 +137,19 @@ The standing-instruction case has no control. It shows the rule survived compact
 
 Decay across *repeated* compactions is still unmeasured — one compaction fires per run, never two.
 
-One run of the correction case answered "March 17, 2024", inventing a year the user never gave, and the judge scored it 10 because the rubric asked only about the date. That is the rubric's blind spot rather than the judge's: a rubric scores what it names.
+### A rubric scores what it names
+
+The first version of these cases gave a bare day and month — "the 3rd of March" — and one run of the correction case answered **"March 17, 2024"**, inventing a year the user never supplied. It scored 10, correctly: the rubric asked only about the date, and the date was right.
+
+The judge was not at fault, and neither was a vague instruction to be careful. The fix was to make the fact complete and then say what completeness means. Both cases now state a year — 3 March 2027, corrected to 17 March 2027 — and both rubrics grade the date in full:
+
+> Check the date in full, including the year, and treat any part of it that the user never said as invented. Score 1 to 3 if it gives a year other than 2027 … and 6 to 7 if it gives day and month but drops the year.
+
+The two bands are deliberately different. Inventing a year is a fabrication and belongs at the bottom; omitting one is merely incomplete and belongs in the middle. Collapsing them would have told us the reply was imperfect without telling us which failure it was.
+
+Both cases still score 10.0 after the change, and the judge's reasons now cite the year explicitly — *"full shipping date '3rd of March 2027' as preserved in the summary"* — where before they mentioned only the day and month. The score did not move; what the score means did.
+
+The general lesson matches the one about tool descriptions above: an eval catches what it is pointed at. This one was passing on a reply that contained a fabrication, and no amount of re-running would have surfaced that — only naming the thing in the rubric did.
 
 Verdicts from that run, verbatim — the reasons are worth reading, because they show the judge working from the tool traffic rather than the assistant's account of itself:
 
