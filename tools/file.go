@@ -29,11 +29,26 @@ func NewWorkspace() (cleanup func() error, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating workspace: %w", err)
 	}
-	workspace = dir
+	if err := SetWorkspace(dir); err != nil {
+		return nil, err
+	}
 	return func() error {
 		workspace = ""
 		return os.RemoveAll(dir)
 	}, nil
+}
+
+// SetWorkspace configures the directory the file tools operate in. The
+// directory is created if it does not already exist.
+func SetWorkspace(dir string) error {
+	if dir == "" {
+		return fmt.Errorf("workspace path is required")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating workspace %q: %w", dir, err)
+	}
+	workspace = dir
+	return nil
 }
 
 // Workspace reports the directory the file tools operate in, or "" before

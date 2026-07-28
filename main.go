@@ -67,7 +67,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "worker":
-			if err := runWorker(); err != nil {
+			if err := runWorker(apiKey); err != nil {
 				log.Fatal(err)
 			}
 			return
@@ -75,7 +75,7 @@ func main() {
 			if len(os.Args) < 3 {
 				log.Fatalf("usage: %s temporal <prompt>", os.Args[0])
 			}
-			answer, err := runTemporal(ctx, apiKey, strings.Join(os.Args[2:], " "))
+			answer, err := runTemporal(ctx, strings.Join(os.Args[2:], " "))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -106,7 +106,12 @@ func main() {
 	}
 }
 
-func runWorker() error {
+func runWorker(apiKey string) error {
+	if apiKey != "" {
+		if err := gaitemporal.ConfigureAPIKey(apiKey); err != nil {
+			return err
+		}
+	}
 	w, err := gaitemporal.NewWorker("", "")
 	if err != nil {
 		return err
@@ -115,7 +120,15 @@ func runWorker() error {
 	return w.Run(temporalworker.InterruptCh())
 }
 
-func runTemporal(ctx context.Context, apiKey, prompt string) (string, error) {
+func runTemporal(ctx context.Context, prompt string) (string, error) {
+	workspaceDir, err := os.MkdirTemp("", "gai-workspace-*")
+	if err != nil {
+		return "", fmt.Errorf("creating workspace: %w", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(workspaceDir)
+	}()
+
 	c, err := gaitemporal.NewClient("")
 	if err != nil {
 		return "", err
@@ -124,7 +137,7 @@ func runTemporal(ctx context.Context, apiKey, prompt string) (string, error) {
 	we, err := c.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
 		ID:        workflowID,
 		TaskQueue: gaitemporal.DefaultTaskQueue,
-	}, gaitemporal.AgentWorkflow, apiKey, prompt)
+	}, gaitemporal.AgentWorkflow, prompt, workspaceDir)
 	if err != nil {
 		return "", err
 	}
