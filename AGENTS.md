@@ -12,7 +12,9 @@ That framing drives most decisions here: **build from primitives, don't adopt an
 
 The course order is Agent Basics → Tool Calling → Evals → Agent Loop → Multi-Turn Evals → File System Tools → Web Search & Context Management → Shell Tool → Human Guidance & Approvals. The README tracks which modules are done; check it before assuming a capability exists.
 
-`main.go` is the CLI: key loading, the stdin loop, process setup. `agent/` holds the loop itself and the defaults it runs with; `tools/` holds the tool registry; `telemetry/` holds the OpenTelemetry exporter and span helpers; `evals/` holds the eval suite and its notes. No build tooling beyond the Go toolchain.
+`main.go` is the CLI: key loading, the stdin loop, process setup. `agent/` holds the loop itself, the compaction that keeps it affordable, the transcript renderer and the defaults it runs with; `tools/` holds the tool registry; `telemetry/` holds the OpenTelemetry exporter and span helpers; `evals/` holds the eval suite and its notes. No build tooling beyond the Go toolchain.
+
+Four documents, each with a job. This file is the working guide — conventions, invariants, and the reasoning behind them. [README.md](README.md) is for someone running `gai` for the first time. [ARCHITECTURE.md](ARCHITECTURE.md) explains how the pieces fit, with diagrams and line-cited claims; it carries figures (line counts, eval scores, a commit hash) that go stale unless a change that moves them updates them. [evals/EVALS.md](evals/EVALS.md) records eval results and what the suite has caught. A change that alters behaviour belongs in whichever of these describe it, in the same commit.
 
 **Check for existing code before writing new code.** Look through the packages and files already in the repo for a type, function, or registry that covers what you need, and extend or reuse it. Do not add a second implementation alongside one that already exists — this happened once with the datetime tool, which was written into `main.go` while `tools/datetime.go` already defined it.
 
@@ -81,7 +83,7 @@ gofmt -l .                   # list unformatted files (should print nothing)
 go vet ./...                 # vet
 ```
 
-`go test ./...` runs the tests; `go test -run TestName ./...` runs one. Coverage is thin — the file-tool path sandbox and the evals.
+`go test ./...` runs the tests; `go test -run TestName ./...` runs one. What is covered without spending an API call: the file-tool path sandbox (`tools/file_test.go`), the compaction cut rule and its tool pairing (`agent/compact_test.go`), the loop end to end against an `httptest` stub (`agent/run_test.go`), and the context a tool is handed (`agent/tool_test.go`). Everything about how the model behaves is in `evals/`, and is billed.
 
 The evals in `evals/` make real, billed API calls and are skipped unless `-eval` is passed: `go test ./evals/ -eval`, plus `-eval.runs=N` to change how many times each case runs (default 5). Never remove that gate; `go test ./...` must stay free. They read the key from `../secrets/openai-api-key`, since a test binary runs in its own package directory.
 
@@ -89,7 +91,7 @@ Verification loop after a change: `gofmt -l . && go vet ./... && go build -o gai
 
 ## API key handling
 
-`loadAPIKey` reads `secrets/openai-api-key` — a file containing **nothing but the raw key**, no `KEY=value` wrapper, trailing whitespace trimmed. This replaced an earlier `.env`-style format; don't reintroduce env-file parsing.
+`agent.LoadAPIKey` reads the file named by `apiKeyPath` in `main.go` — `secrets/openai-api-key`, containing **nothing but the raw key**, no `KEY=value` wrapper, trailing whitespace trimmed. This replaced an earlier `.env`-style format; don't reintroduce env-file parsing. It takes the path as an argument because the evals run from their own package directory and pass `../secrets/openai-api-key`.
 
 `apiKeyPath` is a relative path, so **the binary only works when run from the repo root**. If you add subcommands or move the entry point, this is the first thing that breaks.
 
@@ -112,4 +114,4 @@ Uses `github.com/openai/openai-go` v1.12.0. Two gotchas specific to this SDK ver
 - `openai.NewClient(...)` returns a `Client` **value**, not a pointer.
 - Messages are built with helpers like `openai.UserMessage(s)` that produce `openai.ChatCompletionMessageParamUnion`, not plain structs.
 
-The model is pinned in the `model` const (`openai.ChatModelGPT4oMini`). `resp.Choices` can legitimately come back empty — the existing code checks for this before indexing.
+The model is pinned in `agent.Model` (`openai.ChatModelGPT4oMini`), exported so the evals score the model that ships. `resp.Choices` can legitimately come back empty — the existing code checks for this before indexing.

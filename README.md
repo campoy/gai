@@ -24,6 +24,8 @@ Course modules, in order, and where this port stands:
 | Shell Tool | Sandboxed command execution | Not started |
 | Human Guidance | Approval flow before risky actions | Not started |
 
+[ARCHITECTURE.md](ARCHITECTURE.md) covers how the pieces fit together — the loop, the tool registry, the workspace sandbox, compaction and the two eval suites — with diagrams and the open edges left over.
+
 ## Tools
 
 The agent can call `current_datetime`, `web_search`, `read_file`, `write_file`, `list_files`, and `delete_file`.
