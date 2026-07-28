@@ -20,7 +20,7 @@ Course modules, in order, and where this port stands:
 | Agent Loop | Multi-step reason/act until done | Done |
 | Multi-Turn Evals | System prompts, conversation scoring | Done |
 | File System Tools | Read, write, list, delete | Done |
-| Web Search & Context | Search plus window compaction | Search done, compaction not started |
+| Web Search & Context | Search plus window compaction | Done |
 | Shell Tool | Sandboxed command execution | Not started |
 | Human Guidance | Approval flow before risky actions | Not started |
 
@@ -33,6 +33,28 @@ The agent can call `current_datetime`, `web_search`, `read_file`, `write_file`, 
 `write_file` refuses to replace a file that already exists unless the call sets `overwrite: true`, which the model only does after reading it — otherwise "add a line to notes.md" silently discarded the rest of the file. See [evals/EVALS.md](evals/EVALS.md).
 
 The file tools operate on a temporary workspace created at the start of each run and deleted at the end. It starts empty, the agent cannot reach outside it — absolute paths and paths escaping the workspace are refused — and nothing it writes survives the run. That also means the agent cannot read this repository, only files it created itself.
+
+## Context compaction
+
+A long conversation, or one whose tools return a lot of text, eventually costs more to send than it is worth. Once the history passes a token budget the agent summarises the older middle of it and carries on with the summary in its place:
+
+```
+system prompt          system prompt
+user: one              summary of the earlier turns
+assistant …            user: three
+user: two        →     assistant …
+assistant …            user: four
+user: three
+…
+```
+
+The system prompt is kept byte for byte, the last two user messages and everything that followed them are kept verbatim, and the stretch between is replaced by one summary written by the model itself.
+
+The cut always lands on a user message. The API rejects a history where a tool result's call is missing, or an assistant's `tool_calls` go unanswered, and tool traffic never spans two user messages — so cutting there cannot orphan either half of a pair. When there is no interior user message to cut at, a single message whose tools returned too much, compaction declines and the request goes out over budget rather than malformed.
+
+The budget is `compactAfter` in `agent/compact.go`, deliberately well below the model's real window so the mechanism is visible rather than theoretical. Compaction is best-effort throughout: if the summary call fails, the conversation continues uncompacted. It logs a line to stderr when it fires.
+
+One consequence worth knowing: `Run` appends every turn to the caller's params, but compaction also *removes* from them. The params hold the conversation as the agent currently sees it, which after a compaction is not everything that was said.
 
 ## Evals
 

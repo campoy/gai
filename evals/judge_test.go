@@ -116,6 +116,37 @@ and 1 if the wrong file was deleted. After the clarification, notes-work.md shou
 notes-home.md untouched.`,
 		minScore: 7,
 	},
+	{
+		name: "remembers across a compaction",
+		seed: filler(map[string]string{}),
+		messages: []string{
+			"My project is codenamed Kingfisher and it ships on the 3rd of March. Write exactly that into project.md.",
+			"Now read chapter-1.txt and chapter-2.txt and tell me roughly how long each one is.",
+			"Read chapter-3.txt and chapter-4.txt too, same question.",
+			"Remind me what my project is called and when it ships.",
+		},
+		rubric: `The chapter files are long, so by the last message the earlier turns have been replaced
+by a summary — the assistant cannot see the first exchange any more. The final reply must still say
+Kingfisher and the 3rd of March, either because the summary preserved them or because the assistant
+re-read project.md. Both are correct; re-reading is not a fault. Score 1 to 3 if it gives a different
+name or date, invents one, or claims it cannot know while project.md sits in the workspace unread.`,
+		minScore: 8,
+	},
+}
+
+// filler adds four long files to a seed, big enough that reading them pushes
+// the conversation past the compaction budget. The content is repetitive on
+// purpose: it has to cost tokens, not carry meaning that could be confused with
+// the fact the case is really testing.
+func filler(seed map[string]string) map[string]string {
+	for i := 1; i <= 4; i++ {
+		var b strings.Builder
+		for line := 1; b.Len() < 9000; line++ {
+			fmt.Fprintf(&b, "Chapter %d, line %d: the river ran on past the reeds and the low grey stones.\n", i, line)
+		}
+		seed[fmt.Sprintf("chapter-%d.txt", i)] = b.String()
+	}
+	return seed
 }
 
 func TestJudgeConversations(t *testing.T) {
@@ -193,10 +224,12 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 		}
 	}
 
-	// run appends every turn to params, so this is the whole conversation the
-	// model saw — tool calls and their results included, not just the prose.
+	// Run appends every turn to params, so this is the conversation as the agent
+	// saw it — tool calls and their results included, not just the prose. Where
+	// compaction fired, what is left is the summary that replaced those turns,
+	// which is also exactly what the agent had to work from.
 	transcript := &strings.Builder{}
-	transcript.WriteString(transcribe(params.Messages))
+	transcript.WriteString(agent.Transcribe(params.Messages))
 
 	// The judge also sees what the workspace actually ended up holding, so it
 	// can catch an assistant that describes a file it never wrote.
@@ -222,48 +255,6 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 	return transcript.String(), nil
 }
 
-// transcribe renders a conversation for the judge: every user message, every
-// assistant reply, and every tool call paired with the result it returned.
-//
-// The tool traffic is the point. Without it the judge can only take the
-// assistant's word for what happened, which is exactly the thing being graded.
-func transcribe(messages []openai.ChatCompletionMessageParamUnion) string {
-	// Tool results carry only the id of the call they answer, so the names have
-	// to be collected on the way past.
-	toolNames := map[string]string{}
-
-	var b strings.Builder
-	for _, m := range messages {
-		switch {
-		// The system message is left out. The judge is told about the persona
-		// already, and showing it the instruction to be flamboyant invites it to
-		// grade tone, which is not what it is for.
-		case m.OfSystem != nil:
-			continue
-
-		case m.OfUser != nil:
-			fmt.Fprintf(&b, "USER: %s\n\n", m.OfUser.Content.OfString.Or(""))
-
-		case m.OfAssistant != nil:
-			if content := m.OfAssistant.Content.OfString.Or(""); content != "" {
-				fmt.Fprintf(&b, "ASSISTANT: %s\n\n", content)
-			}
-			for _, tc := range m.OfAssistant.ToolCalls {
-				toolNames[tc.ID] = tc.Function.Name
-				fmt.Fprintf(&b, "ASSISTANT CALLS TOOL: %s(%s)\n", tc.Function.Name, tc.Function.Arguments)
-			}
-
-		case m.OfTool != nil:
-			name := toolNames[m.OfTool.ToolCallID]
-			if name == "" {
-				name = "unknown"
-			}
-			fmt.Fprintf(&b, "TOOL RESULT from %s: %s\n\n", name, m.OfTool.Content.OfString.Or(""))
-		}
-	}
-	return b.String()
-}
-
 const judgePrompt = `You are grading a transcript between a user and an AI assistant that has tools for
 telling the time and for reading, writing, listing and deleting files.
 
@@ -273,6 +264,15 @@ The transcript shows everything, not just the conversation:
   ASSISTANT:             what the assistant said back
   ASSISTANT CALLS TOOL:  a tool the assistant invoked, with its exact arguments
   TOOL RESULT from X:    what that tool returned, including errors
+
+It may also contain:
+
+  EARLIER CONVERSATION, SUMMARISED:  a summary that replaced older turns
+
+That line means the conversation grew long enough that the assistant compacted it: those turns are
+genuinely gone from what the assistant can see, and the summary is all it has left of them. Judge it on
+what it did with what remained. Forgetting something the summary preserved is a fault; so is stating
+something as fact that the summary does not support, when re-reading a file would have settled it.
 
 At the end you are shown the real contents of the workspace after the conversation finished.
 

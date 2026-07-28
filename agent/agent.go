@@ -53,6 +53,16 @@ func LoadAPIKey(path string) (string, error) {
 type Agent struct {
 	client *openai.Client
 	tools  tools.Tools
+
+	// usedTokens is what the last response reported the conversation costing,
+	// and is what compaction is triggered on. Taking the server's own count
+	// costs nothing and is exact, where estimating from the text would need
+	// either a tokeniser dependency or a fudge factor.
+	//
+	// It makes an Agent stateful, which is honest: one is built per
+	// conversation, by main and by each eval case. An Agent shared between two
+	// conversations at once would miscount, and would need a mutex besides.
+	usedTokens int64
 }
 
 // New returns an agent that calls the API and runs its tools through client.
@@ -88,11 +98,21 @@ func (a *Agent) Params() openai.ChatCompletionNewParams {
 // Every turn is appended to params, including the model's final answer, so a
 // caller holding the same params across several messages gets a conversation
 // rather than a series of unrelated questions.
+//
+// params therefore holds the conversation as the agent currently sees it, which
+// is not always everything that was said: once the history passes compactAfter
+// tokens, compact replaces the older middle of it with a summary. A caller that
+// needs the literal record of every turn has to keep its own copy.
 func (a *Agent) Run(ctx context.Context, params *openai.ChatCompletionNewParams) (string, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "agent")
 	defer span.End()
 
 	for range maxSteps {
+		// Before asking, not after answering: a single message whose tools return
+		// a lot of text can outgrow the budget without the loop ever returning to
+		// the caller.
+		a.compact(ctx, params)
+
 		callCtx, callSpan := telemetry.StartLLM(ctx, params.Model, params.Messages)
 		resp, err := a.client.Chat.Completions.New(callCtx, *params)
 		telemetry.EndLLM(callSpan, resp, err)
@@ -102,6 +122,10 @@ func (a *Agent) Run(ctx context.Context, params *openai.ChatCompletionNewParams)
 		if len(resp.Choices) == 0 {
 			return "", fmt.Errorf("no choices returned")
 		}
+		// Prompt plus completion is what the next request starts from, before
+		// whatever the tools return is added to it. That undercounts by one turn,
+		// which is why the budget sits well below the model's real limit.
+		a.usedTokens = resp.Usage.TotalTokens
 		msg := resp.Choices[0].Message
 		// The assistant turn goes back whether or not it asked for tools: a tool
 		// result without its call is rejected by the API, and an answer missing
