@@ -52,18 +52,6 @@ func main() {
 		}
 	}()
 
-	// The file tools work in a throwaway directory, so nothing the agent writes
-	// outlives the run or touches the real file system.
-	cleanup, err := tools.NewWorkspace()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() {
-		if err := cleanup(); err != nil {
-			log.Printf("removing workspace: %v", err)
-		}
-	}()
-
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "worker":
@@ -84,8 +72,23 @@ func main() {
 		}
 	}
 
+	// The file tools work in a throwaway directory, so nothing the agent writes
+	// outlives the run or touches the real file system. It belongs to this path
+	// alone: `gai worker` opens one per activity, and `gai temporal` only passes
+	// a path to the workflow, so creating it before the switch above built a
+	// directory those two would never use.
+	workspace, cleanup, err := tools.NewWorkspace()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			log.Printf("removing workspace: %v", err)
+		}
+	}()
+
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	ag := agent.New(&client)
+	ag := agent.New(&client, workspace)
 	params := ag.Params()
 
 	// With a prompt on the command line, answer it and stop. With none, read

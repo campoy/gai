@@ -95,7 +95,9 @@ func TestRunCompactsOnceTheBudgetIsPassed(t *testing.T) {
 		reply{content: "third", totalToken: 10},
 	)
 
-	a := New(client)
+	// No workspace: these cases drive the loop against a stubbed API and never
+	// reach a file tool.
+	a := New(client, nil)
 	params := a.Params()
 	for _, message := range []string{"one", "two", "three"} {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
@@ -165,7 +167,9 @@ func TestRunDoesNotCompactUnderBudget(t *testing.T) {
 		reply{content: "third", totalToken: compactAfter - 1},
 	)
 
-	a := New(client)
+	// No workspace: these cases drive the loop against a stubbed API and never
+	// reach a file tool.
+	a := New(client, nil)
 	params := a.Params()
 	for _, message := range []string{"one", "two", "three"} {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
@@ -192,7 +196,9 @@ func TestRunSurvivesAFailedSummary(t *testing.T) {
 		reply{content: "third", totalToken: 10},
 	)
 
-	a := New(client)
+	// No workspace: these cases drive the loop against a stubbed API and never
+	// reach a file tool.
+	a := New(client, nil)
 	params := a.Params()
 	for _, message := range []string{"one", "two", "three"} {
 		params.Messages = append(params.Messages, openai.UserMessage(message))

@@ -284,15 +284,18 @@ the second wastes time and money, the rest is drift and blind spots.
       passing a key instead of a path, or single-worker co-location as a
       documented hard constraint. Everything below in this group depends on the
       answer, so it comes first even though it is a decision rather than a diff.
-- [ ] **Remove the package-level workspace from the file tools** (finding 1).
-      Give them a workspace field and build the tool set per activity
-      invocation, the way `tools.All` already closes over the client. Deletes
-      the data race and the cross-run file corruption together.
-- [ ] **Drop the `SetWorkspace` call from `ChatCompletionActivity`** (finding 1).
-      It touches no files; the call only widens the race. One line.
+- [x] **Remove the package-level workspace from the file tools** (finding 1).
+      Done: `tools.Workspace` is a value the file tools are built around
+      (`tools.All(client, ws)`), `SetWorkspace` and the package variable are
+      gone, and `RunToolActivity` opens its own per invocation. Deletes the
+      data race and the cross-run file corruption together.
+- [x] **Drop the `SetWorkspace` call from `ChatCompletionActivity`** (finding 1).
+      Done: it builds its tool set with a nil workspace, since it only needs
+      the schemas. `CompletionRequest.WorkspaceDir` went with it.
 - [ ] **Clean up the worker-side workspace when a run ends** (finding 2). Nothing
       does today, so every run leaks a directory — silently, because
-      `SetWorkspace` calls `MkdirAll`.
+      `OpenWorkspace` calls `MkdirAll`. Deliberately left to the persistence
+      decision above: who deletes it depends on who owns it.
 - [ ] **Give `RunToolActivity` `MaximumAttempts: 1`** (finding 4). At-least-once
       delivery plus `write_file`'s no-clobber rule turns a successful write into
       a reported failure. Let the model retry through the loop, which is how the
@@ -303,7 +306,7 @@ the second wastes time and money, the rest is drift and blind spots.
 - [ ] **Mark permanent failures non-retryable** (finding 3).
       `temporal.NewNonRetryableApplicationError` on `unknown tool`,
       `missing API key`, `no choices returned`, and the argument-parse errors out
-      of `json.Unmarshal` and `resolve`.
+      of `json.Unmarshal` and `(*Workspace).resolve`.
 - [ ] **Split `defaultActivityOptions()` per activity** (finding 7). Seconds for
       the file and datetime tools, real headroom only for `web_search`.
 - [ ] **Add `ScheduleToCloseTimeout`** (finding 7). Today a permanently
@@ -355,9 +358,9 @@ the second wastes time and money, the rest is drift and blind spots.
       it open until the first orphaned execution is not.
 - [ ] **Close the Temporal clients** (finding 9). `NewWorker` dials one and never
       returns or closes it; `runTemporal` does not close its own.
-- [ ] **Move `tools.NewWorkspace()` into the local path** (finding 9). It runs
-      before the subcommand switch, so `gai worker` creates a directory it never
-      uses.
+- [x] **Move `tools.NewWorkspace()` into the local path** (finding 9). Done
+      alongside finding 1: with the workspace threaded through `agent.New`,
+      there was nothing for a pre-switch one to attach to anyway.
 - [ ] **Stop passing the API key through `os.Setenv`** (finding 9). Same
       invisible-global pattern as the workspace, and the same fix — close over
       it when building the activities.

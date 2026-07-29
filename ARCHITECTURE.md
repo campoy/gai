@@ -33,7 +33,7 @@ flowchart TD
   user --> main
   main -->|"NewWorkspace()"| ws
   main -->|"Init(ctx)"| tel
-  main -->|"New(client)"| ag
+  main -->|"New(client, ws)"| ag
   ag --> loop
   loop <-->|"chat completions"| api
   loop -->|"history over compactAfter"| comp["Agent.compact<br/>summarise the older middle"]
@@ -42,7 +42,7 @@ flowchart TD
   reg --> dt["current_datetime"]
   reg --> files["read_file · write_file<br/>list_files · delete_file"]
   reg --> web["web_search"]
-  files -->|"every path via resolve()"| ws
+  files -->|"every path via ws.resolve()"| ws
   web --> search
   loop -.->|"spans"| tel
   tel -.-> coll
@@ -50,9 +50,9 @@ flowchart TD
 
 | Package | Owns | Key symbols | Lines |
 | --- | --- | --- | ---: |
-| `main` | Process lifecycle: key file, telemetry init + bounded flush, workspace create/cleanup, argv-vs-stdin dispatch. | `main`, `chat` | 114 |
-| `agent` | The loop, the compaction that keeps it affordable, the transcript renderer, the defaults it runs with, and the API-key reader. Deliberately outside `main` so evals can drive it. | `New`, `Params`, `Run`, `runTool`, `compact`, `cutPoint`, `Transcribe`, `SystemPrompt`, `Model` | 386 |
-| `tools` | The registry type, the six tools, and the workspace sandbox they are confined to. | `Tool`, `Tools`, `Function`, `All`, `ByName`, `NewWorkspace`, `resolve` | 474 |
+| `main` | Process lifecycle: key file, telemetry init + bounded flush, workspace create/cleanup, argv-vs-stdin dispatch, and the `worker` / `temporal` subcommands. | `main`, `chat`, `runWorker`, `runTemporal` | 182 |
+| `agent` | The loop, the compaction that keeps it affordable, the transcript renderer, the defaults it runs with, and the API-key reader. Deliberately outside `main` so evals can drive it. | `New`, `Params`, `Run`, `runTool`, `compact`, `cutPoint`, `Transcribe`, `SystemPrompt`, `Model` | 390 |
+| `tools` | The registry type, the six tools, and the workspace sandbox they are confined to. | `Tool`, `Tools`, `Function`, `All`, `ByName`, `Workspace`, `NewWorkspace`, `OpenWorkspace`, `resolve` | 514 |
 | `telemetry` | Tracer provider + OTLP exporter, and GenAI-convention span helpers for model and tool calls. | `Init`, `WithEndpoint`, `WithExporter`, `StartLLM`, `EndLLM`, `StartTool` | 199 |
 | `evals` | Test-only. Trajectory scoring and LLM-judged multi-turn conversations, gated behind `-eval`. | `TestEval`, `TestJudgeConversations`, `runCase`, `converse`, `judge` | 954 |
 
@@ -213,12 +213,14 @@ The context is the loop's own, taken from the tool span rather than the message 
 
 ## 5. The workspace boundary
 
-This is the security-relevant part of the codebase. The file tools do not operate on the repository — they operate on an `os.MkdirTemp` directory created per process and deleted on exit. The model picks paths out of untrusted text, so *every* file tool routes through one chokepoint.
+This is the security-relevant part of the codebase. The file tools do not operate on the repository — they operate on an `os.MkdirTemp` directory created per run and deleted at the end of it. The model picks paths out of untrusted text, so *every* file tool routes through one chokepoint.
+
+The directory is a `*Workspace` value the tools are built around, not package state: `tools.All(client, ws)` hands it to each file tool, which resolves against its own copy. Two agents in one process — two Temporal activities on one worker — therefore cannot resolve paths against each other's directory. `TestWorkspacesAreIndependent` is what keeps that true.
 
 ```mermaid
 flowchart TD
-  p["model-supplied path"] --> c1{"workspace initialised?"}
-  c1 -- no --> e1["error: call NewWorkspace first"]
+  p["model-supplied path"] --> c1{"tool built with a workspace?"}
+  c1 -- no --> e1["error: no workspace"]
   c1 -- yes --> c2{"path empty?"}
   c2 -- yes --> e2["error: path is required"]
   c2 -- no --> c3{"filepath.IsAbs?"}
@@ -231,19 +233,20 @@ flowchart TD
 
 > **Invariant.** Never add a file tool that bypasses `resolve`. `tools/file_test.go` pins the traversal cases; keep it passing.
 
-**Lifetime, not just location.** `NewWorkspace` returns a cleanup closure that blanks the package variable and `RemoveAll`s the directory. `main` defers it once per process; each eval case defers its own. The workspace starting empty is also why `write_file` has to `MkdirAll` the parent of any nested path — `tools/file.go:27–41, 139–142`.
+**Lifetime, not just location.** `NewWorkspace` returns the workspace and a cleanup closure that `RemoveAll`s the directory. `main` defers it once per process on the local path; each eval case defers its own. `OpenWorkspace(dir)` is the other constructor — it adopts a directory the caller named, creating it if absent, and returns no cleanup because the caller owns the lifetime; the Temporal tool activity opens one per invocation. The workspace starting empty is also why `write_file` has to `MkdirAll` the parent of any nested path — `tools/file.go:27–50, 165–168`.
 
 **Consequence worth stating out loud.** The agent cannot read this repository — only files it created itself. Nothing it writes survives the run. That is a deliberate scope limit for a workshop port, and it is what the Shell Tool module will have to renegotiate.
 
-`tools/file.go:236–256` — the chokepoint:
+`tools/file.go:258–283` — the chokepoint:
 
 ```go
 // resolve turns a model-supplied path into an absolute one inside the
 // workspace, rejecting anything that reaches outside it. The model chooses
 // these paths from text it was given, so they are untrusted.
-func resolve(path string) (string, error) {
-	if workspace == "" {
-		return "", fmt.Errorf("no workspace: call NewWorkspace before using the file tools")
+func (w *Workspace) resolve(path string) (string, error) {
+	dir := w.Dir()
+	if dir == "" {
+		return "", fmt.Errorf("no workspace: the file tools were built without one")
 	}
 	if path == "" {
 		return "", fmt.Errorf("path is required")
@@ -252,8 +255,8 @@ func resolve(path string) (string, error) {
 		return "", fmt.Errorf("path must be relative to the workspace, got %q", path)
 	}
 
-	abs := filepath.Join(workspace, path)
-	rel, err := filepath.Rel(workspace, abs)
+	abs := filepath.Join(dir, path)
+	rel, err := filepath.Rel(dir, abs)
 	if err != nil {
 		return "", err
 	}
@@ -264,7 +267,7 @@ func resolve(path string) (string, error) {
 }
 ```
 
-`tools/file.go:129–138` — the clobber guard the evals forced:
+`tools/file.go:155–164` — the clobber guard the evals forced:
 
 ```go
 // Refuse to clobber a file the model has not acknowledged. Describing the
@@ -367,9 +370,9 @@ Ordered by how much they constrain what comes next.
 | Nothing cancels a run | `main.go:35`, both eval suites | The context is now threaded all the way into the tools, but every caller passes `context.Background()`. The plumbing is tested; what happens when a cancellation actually fires is not. | known |
 | Decay across repeated compactions is unmeasured | `evals/judge_test.go` | Every compaction case fires exactly one cut. What a fact looks like after it has been summarised twice — a summary of a summary — has never been observed. | question |
 | Binary only runs from the repo root | `main.go:22` | `apiKeyPath` is relative. The evals already work around it with `../secrets/…`. Adding a subcommand or moving the entry point breaks this first. | known |
-| The workspace is a package-level variable | `tools/file.go:22` | Process-global and not concurrency-safe, so two agents in one process share a workspace — mildly in tension with the reasoning that made `web_search` close over its client instead. Fine for a single-run CLI; worth revisiting if the evals ever parallelise. | question |
+| A workspace path means nothing across processes | `main.go` — `runTemporal`, `temporal/temporal.go` | The Temporal client creates a temp directory locally and passes its *path* to the workflow; the worker opens a directory that merely shares the string. Correct only while exactly one worker is co-located with the client, and nothing on the worker side ever deletes it. The persistence strategy is still undecided — see `design/temporal-review.md` finding 2. | known |
 
-Two edges from earlier drafts are closed. Compaction landed, so the history no longer grows without bound; and `tools.Function` now takes a context, so `web_search` no longer calls `context.Background()` and its nested model call is traced beneath the tool call that made it.
+Three edges from earlier drafts are closed. Compaction landed, so the history no longer grows without bound; `tools.Function` now takes a context, so `web_search` no longer calls `context.Background()` and its nested model call is traced beneath the tool call that made it; and the workspace is no longer a package-level variable — the file tools close over a `*Workspace` the way `web_search` closes over its client, so two agents in one process no longer share a directory.
 
 ### Course modules
 

@@ -62,9 +62,22 @@ func (ts Tools) AsToolParams() []openai.ChatCompletionToolParam {
 }
 
 // All returns every tool available to the agent. It takes a client because
-// web_search runs a model call of its own; the rest ignore it.
-func All(client *openai.Client) Tools {
-	return Tools{DateTime, ReadFile, WriteFile, ListFiles, DeleteFile, NewWebSearch(client)}
+// web_search runs a model call of its own, and a workspace because the file
+// tools are confined to one; the rest ignore both. Everything a tool needs is
+// closed over here, so nothing has to be read out of package state at call
+// time and two sets can be live at once against two workspaces.
+//
+// The workspace may be nil for a caller that only wants the schemas — those do
+// not depend on the directory — but every file tool then refuses its paths.
+func All(client *openai.Client, workspace *Workspace) Tools {
+	return Tools{
+		DateTime,
+		NewReadFile(workspace),
+		NewWriteFile(workspace),
+		NewListFiles(workspace),
+		NewDeleteFile(workspace),
+		NewWebSearch(client),
+	}
 }
 
 // ByName returns the tool in the set registered under the given name.
