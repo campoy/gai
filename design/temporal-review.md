@@ -263,17 +263,98 @@ them.
 - **The workflow body is deterministic**, as noted at the top.
 - **`go vet ./...` and `go test ./...` are clean**, and `gofmt -l .` is silent.
 
-## Suggested order
+## Task list
 
-1. Workspace ownership (findings 1 and 2) — the only findings that produce wrong
-   answers rather than slow or expensive ones, and 2 is a decision that has to be
-   made before the code can be right.
-2. Per-activity options: non-retryable permanent errors, `MaximumAttempts: 1` for
-   mutating tools, `ScheduleToCloseTimeout`, heartbeat on the model call
-   (findings 3, 4, 7).
-3. The `TestWorkflowEnvironment` test and the payload round-trip test — cheap,
-   free to run, and they make everything after this safe to change.
-4. Compaction behind an activity, with the cut decision staying in workflow code
-   (finding 5).
-5. Telemetry interceptor, so the eval suite can see this path at all (finding 6).
-6. Write the versioning posture down, whichever way it goes (finding 8).
+Most urgent first. Urgency here means "how wrong is the program while this is
+unfixed", not how hard the fix is — the first group produces incorrect answers,
+the second wastes time and money, the rest is drift and blind spots.
+
+### Correctness — runs produce wrong results
+
+- [ ] **Decide the workspace persistence strategy and write it down** (finding 2).
+      Session worker pinned per conversation, a durable store with the workflow
+      passing a key instead of a path, or single-worker co-location as a
+      documented hard constraint. Everything below in this group depends on the
+      answer, so it comes first even though it is a decision rather than a diff.
+- [ ] **Remove the package-level workspace from the file tools** (finding 1).
+      Give them a workspace field and build the tool set per activity
+      invocation, the way `tools.All` already closes over the client. Deletes
+      the data race and the cross-run file corruption together.
+- [ ] **Drop the `SetWorkspace` call from `ChatCompletionActivity`** (finding 1).
+      It touches no files; the call only widens the race. One line.
+- [ ] **Clean up the worker-side workspace when a run ends** (finding 2). Nothing
+      does today, so every run leaks a directory — silently, because
+      `SetWorkspace` calls `MkdirAll`.
+- [ ] **Give `RunToolActivity` `MaximumAttempts: 1`** (finding 4). At-least-once
+      delivery plus `write_file`'s no-clobber rule turns a successful write into
+      a reported failure. Let the model retry through the loop, which is how the
+      local path already handles tool errors.
+
+### Cost and latency — runs are slow, expensive, or hit limits
+
+- [ ] **Mark permanent failures non-retryable** (finding 3).
+      `temporal.NewNonRetryableApplicationError` on `unknown tool`,
+      `missing API key`, `no choices returned`, and the argument-parse errors out
+      of `json.Unmarshal` and `resolve`.
+- [ ] **Split `defaultActivityOptions()` per activity** (finding 7). Seconds for
+      the file and datetime tools, real headroom only for `web_search`.
+- [ ] **Add `ScheduleToCloseTimeout`** (finding 7). Today a permanently
+      unreachable dependency burns ~15 minutes before the workflow hears about
+      it.
+- [ ] **Add `HeartbeatTimeout` to `ChatCompletionActivity`** (finding 7). The
+      model call is the one thing here that can hang on a stalled connection.
+- [ ] **Move summarization behind an activity, keeping the cut decision in
+      workflow code** (finding 5). The `cutPoint`-lands-on-a-user-message rule
+      must replay identically, so only the summarising model call crosses the
+      boundary. Also what keeps activity inputs away from the 2 MB payload
+      limit.
+
+### Tests — none of the above is safe to change without these
+
+- [ ] **`testsuite.TestWorkflowEnvironment` test for `AgentWorkflow`** with both
+      activities mocked. Cases: no-tool answer returns immediately; a tool round
+      trip pairs `tool_calls` with its result; an activity error becomes a tool
+      message and the loop continues; the step cap is reported rather than
+      hanging. Costs no API calls.
+- [ ] **Promote the payload round-trip check to a real test.** Verified by hand
+      and sound today, but it rests on openai-go's union encoding and would break
+      quietly on an SDK bump.
+- [ ] **`worker.WorkflowReplayer` test over a recorded history** — Phase 3's open
+      checkbox, and the only thing that catches a determinism regression before
+      production does.
+- [ ] **Replace `TestDefaultActivityOptions`** (testing section). It restates the
+      constants it is built from and would pass with `AgentWorkflow` deleted.
+
+### Convergence — the two loops drifting apart
+
+- [ ] **Wire up telemetry on the workflow path** (finding 6). The SDK's
+      `contrib/opentelemetry` interceptor covers workflow and activity spans;
+      the LLM and tool spans need the activities to open them. Until this lands,
+      `evals/trajectory_test.go` cannot score a workflow run at all, because it
+      reads trajectories off the spans.
+- [ ] **Collapse `maxWorkflowSteps` into `agent.maxSteps`** (finding 6). Two
+      constants with the same value and the same meaning will drift.
+- [ ] **Narrow the workflow body toward `agent.Run`** (finding 6). The
+      duplication is a defensible migration stage, but the less of the loop it
+      restates the less there is to keep in sync.
+
+### Hygiene
+
+- [ ] **Write the versioning posture into AGENTS.md** (finding 8). If runs stay
+      seconds long, say so and the `GetVersion` obligation goes away for the
+      price of a sentence. If approvals make workflows wait on a human, it is
+      mandatory from the first sequence change. Either answer is fine; leaving
+      it open until the first orphaned execution is not.
+- [ ] **Close the Temporal clients** (finding 9). `NewWorker` dials one and never
+      returns or closes it; `runTemporal` does not close its own.
+- [ ] **Move `tools.NewWorkspace()` into the local path** (finding 9). It runs
+      before the subcommand switch, so `gai worker` creates a directory it never
+      uses.
+- [ ] **Stop passing the API key through `os.Setenv`** (finding 9). Same
+      invisible-global pattern as the workspace, and the same fix — close over
+      it when building the activities.
+- [ ] **Comment the workflow ID choice** (finding 9). `gai-<UnixNano>` disables
+      Temporal's free deduplication; presumably deliberate for a CLI, but it
+      should say so.
+- [ ] **Pass `activityCtx` to `Future.Get`** (finding 9). Harmless as written,
+      just clearer. Two lines.
