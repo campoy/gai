@@ -46,10 +46,10 @@ func webSearch(ctx context.Context, client *openai.Client, args string) (string,
 		Query string `json:"query"`
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	if strings.TrimSpace(p.Query) == "" {
-		return "", fmt.Errorf("query is required")
+		return "", fmt.Errorf("%w: query is required", ErrInvalidArgument)
 	}
 
 	req := openai.ChatCompletionNewParams{

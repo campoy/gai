@@ -76,6 +76,7 @@ Exit criteria:
 
 ## Notes
 
+- The activity retry policy covers transient failures only: a dropped connection, a rate limit, a worker that died mid-call. Permanent failures — no API key, a tool name the model invented, arguments that do not parse or a path outside the workspace — are returned as `temporal.NewNonRetryableApplicationError` with a stable error type, so they fail on the first attempt and the workflow can hand the reason straight back to the model instead of waiting out three rounds of backoff first. Argument errors are classified in the tool package as `tools.ErrInvalidArgument`, which keeps the Temporal SDK out of `tools/`; `RunToolActivity` is the only place that translates it. Tool failures that are permanent for other reasons — `write_file` refusing to clobber, a delete of a file that is already gone — are not covered by this and want a per-activity retry cap instead.
 - Keep the changes as surgical as possible. The design intentionally favors preserving the existing agent loop, tool registry and transcript logic.
 - The migration should be done in small, reviewable steps. If a later phase reveals a design mismatch, the earlier phase should be updated rather than papered over.
 - The three highest-risk items to verify at the start are payload size, session semantics and update semantics.

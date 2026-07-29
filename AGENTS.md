@@ -34,6 +34,8 @@ Every file tool routes its path through `resolve` in `tools/file.go`, which reje
 
 The only thing linking a schema to its implementation is the name string. Tool failures are returned to the model as text (`runTool`) rather than exiting, so it can recover.
 
+A failure the model caused — arguments that don't parse, a missing path, a path outside the workspace — also wraps `tools.ErrInvalidArgument`. The local loop ignores the distinction and hands every failure back as text either way; the Temporal path turns it into a non-retryable activity error, because calling again with the same arguments cannot start working, and the retry budget spent finding that out is pure latency. Classify a new tool's argument checks the same way and leave everything else unwrapped, so a genuinely transient failure — a rate-limited `web_search`, a dropped connection — keeps its retries. The sentinel lives in `tools` rather than the Temporal package so the tools stay free of the SDK; `tools/errors_test.go` pins both sides of the line.
+
 ## The agent loop
 
 `agent.New(client)` returns an `*agent.Agent` holding the client and its tools; `Params` and `Run` are methods on it. `Run` takes `*openai.ChatCompletionNewParams` and appends every turn to it — the assistant message, any tool results, and the final answer. That is what makes the stdin mode a conversation rather than a series of unrelated questions, and what lets the evals transcribe the tool traffic, so don't switch it back to a value receiver.

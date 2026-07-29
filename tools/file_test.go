@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,8 +24,15 @@ func TestResolve(t *testing.T) {
 		"sub/../../outside.txt",  // traversal via a subdirectory
 	}
 	for _, path := range rejected {
-		if got, err := resolve(path); err == nil {
+		got, err := resolve(path)
+		if err == nil {
 			t.Errorf("resolve(%q) = %q, want error", path, got)
+			continue
+		}
+		// A rejected path is the model's argument, not a passing condition, so
+		// it is classified for the callers that must not retry it.
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Errorf("resolve(%q) = %v, want an ErrInvalidArgument", path, err)
 		}
 	}
 

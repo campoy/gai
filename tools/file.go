@@ -134,7 +134,7 @@ func writeFile(_ context.Context, args string) (string, error) {
 		Overwrite bool   `json:"overwrite"`
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	path, err := resolve(p.Path)
 	if err != nil {
@@ -168,7 +168,7 @@ func listFiles(_ context.Context, args string) (string, error) {
 	}
 	if args != "" {
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", err
+			return "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 	}
 	if p.Path == "" {
@@ -240,7 +240,7 @@ func pathArg(args string) (string, error) {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	return resolve(p.Path)
 }
@@ -248,24 +248,29 @@ func pathArg(args string) (string, error) {
 // resolve turns a model-supplied path into an absolute one inside the
 // workspace, rejecting anything that reaches outside it. The model chooses
 // these paths from text it was given, so they are untrusted.
+//
+// Every rejection here is an ErrInvalidArgument: the path is the argument, and
+// no amount of running the call again makes a bad one good. The missing
+// workspace is the exception — that is the run being set up wrong, not the
+// model calling wrong.
 func resolve(path string) (string, error) {
 	if workspace == "" {
 		return "", fmt.Errorf("no workspace: call NewWorkspace before using the file tools")
 	}
 	if path == "" {
-		return "", fmt.Errorf("path is required")
+		return "", fmt.Errorf("%w: path is required", ErrInvalidArgument)
 	}
 	if filepath.IsAbs(path) {
-		return "", fmt.Errorf("path must be relative to the workspace, got %q", path)
+		return "", fmt.Errorf("%w: path must be relative to the workspace, got %q", ErrInvalidArgument, path)
 	}
 
 	abs := filepath.Join(workspace, path)
 	rel, err := filepath.Rel(workspace, abs)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes the workspace: %q", path)
+		return "", fmt.Errorf("%w: path escapes the workspace: %q", ErrInvalidArgument, path)
 	}
 	return abs, nil
 }

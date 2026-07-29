@@ -29,14 +29,14 @@ func dateTime(_ context.Context, args string) (string, error) {
 	}
 	if args != "" {
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", err
+			return "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 	}
 	loc := time.Local
 	if p.Timezone != "" {
 		l, err := time.LoadLocation(p.Timezone)
 		if err != nil {
-			return "", fmt.Errorf("unknown timezone %q", p.Timezone)
+			return "", fmt.Errorf("%w: unknown timezone %q", ErrInvalidArgument, p.Timezone)
 		}
 		loc = l
 	}
