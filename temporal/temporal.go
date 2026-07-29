@@ -3,6 +3,7 @@ package temporal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -32,6 +33,23 @@ const (
 
 const apiKeyEnvName = "GAI_API_KEY"
 
+// Error types reported for activity failures a retry cannot fix. Temporal
+// records the type in Event History and shows it in the UI, so these names are
+// what a failed run is read back by; they are also what would go in
+// RetryPolicy.NonRetryableErrorTypes if the failure were ever raised somewhere
+// that cannot reach for NewNonRetryableApplicationError.
+const (
+	errTypeMissingAPIKey   = "MissingAPIKey"
+	errTypeNoChoices       = "NoChoicesReturned"
+	errTypeUnknownTool     = "UnknownTool"
+	errTypeInvalidToolArgs = "InvalidToolArguments"
+)
+
+// defaultActivityRetryPolicy covers failures that a second attempt might
+// survive: a dropped connection, a rate limit, a worker that died mid-call.
+// Anything permanent — no key, a tool that does not exist, arguments that do
+// not parse — is returned as a non-retryable application error instead, so it
+// fails on the first attempt rather than sleeping through the backoff first.
 var defaultActivityRetryPolicy = &temporal.RetryPolicy{
 	InitialInterval:    time.Second,
 	BackoffCoefficient: 2.0,
@@ -164,7 +182,7 @@ func ChatCompletionActivity(ctx context.Context, req CompletionRequest) (*Comple
 	}
 	key := APIKey()
 	if key == "" {
-		return nil, fmt.Errorf("missing API key")
+		return nil, temporal.NewNonRetryableApplicationError("missing API key", errTypeMissingAPIKey, nil)
 	}
 
 	client := openai.NewClient(option.WithAPIKey(key))
@@ -177,7 +195,7 @@ func ChatCompletionActivity(ctx context.Context, req CompletionRequest) (*Comple
 		return nil, err
 	}
 	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices returned")
+		return nil, temporal.NewNonRetryableApplicationError("no choices returned", errTypeNoChoices, nil)
 	}
 
 	msg := resp.Choices[0].Message.ToParam()
@@ -191,14 +209,25 @@ func RunToolActivity(ctx context.Context, req ToolInvocation) (string, error) {
 	}
 	key := APIKey()
 	if key == "" {
-		return "", fmt.Errorf("missing API key")
+		return "", temporal.NewNonRetryableApplicationError("missing API key", errTypeMissingAPIKey, nil)
 	}
 
 	client := openai.NewClient(option.WithAPIKey(key))
 	toolsSet := tools.All(&client)
 	tool, ok := toolsSet.ByName(req.Name)
 	if !ok {
-		return "", fmt.Errorf("unknown tool %s", req.Name)
+		// A name the model invented. Retrying invents nothing new; the workflow
+		// turns this into a tool message and the model gets to correct itself.
+		return "", temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("unknown tool %s", req.Name), errTypeUnknownTool, nil)
 	}
-	return tool.Func(ctx, req.Arguments)
+
+	out, err := tool.Func(ctx, req.Arguments)
+	// Arguments the model got wrong fail the same way on every attempt. Other
+	// tool failures — a search whose model call was rate limited, a read that
+	// hit a transient I/O error — keep the retry policy.
+	if errors.Is(err, tools.ErrInvalidArgument) {
+		return "", temporal.NewNonRetryableApplicationError(err.Error(), errTypeInvalidToolArgs, err)
+	}
+	return out, err
 }

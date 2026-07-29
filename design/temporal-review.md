@@ -300,10 +300,15 @@ the second wastes time and money, the rest is drift and blind spots.
 
 ### Cost and latency — runs are slow, expensive, or hit limits
 
-- [ ] **Mark permanent failures non-retryable** (finding 3).
+- [x] **Mark permanent failures non-retryable** (finding 3).
       `temporal.NewNonRetryableApplicationError` on `unknown tool`,
       `missing API key`, `no choices returned`, and the argument-parse errors out
-      of `json.Unmarshal` and `resolve`.
+      of `json.Unmarshal` and `resolve`. The argument errors are classified in
+      the tool package as `tools.ErrInvalidArgument` rather than at the boundary,
+      so `tools/` stays free of the Temporal SDK and `RunToolActivity` is the one
+      place that translates. Only argument errors are covered: marking every tool
+      failure permanent would take the retries away from `web_search`, so the
+      clobber refusal and a missing file stay retryable and belong to finding 4.
 - [ ] **Split `defaultActivityOptions()` per activity** (finding 7). Seconds for
       the file and datetime tools, real headroom only for `web_search`.
 - [ ] **Add `ScheduleToCloseTimeout`** (finding 7). Today a permanently

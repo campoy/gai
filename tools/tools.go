@@ -3,9 +3,22 @@ package tools
 
 import (
 	"context"
+	"errors"
 
 	"github.com/openai/openai-go"
 )
+
+// ErrInvalidArgument marks a tool failure caused by the arguments the model
+// sent: JSON that does not parse, a missing path, a path outside the
+// workspace. Running the same call again cannot turn it into a success — only
+// the model calling differently can — which is what separates it from a
+// failure worth retrying, like a search whose model call was rate limited.
+//
+// Match it with errors.Is. The local agent loop makes no use of the
+// distinction and hands every tool error back to the model as text; the
+// Temporal path uses it to fail the activity without spending its retry
+// budget first.
+var ErrInvalidArgument = errors.New("invalid argument")
 
 // Tool represents a utility function with a name, description, and the function itself.
 type Tool struct {
