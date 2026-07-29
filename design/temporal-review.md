@@ -5,6 +5,14 @@ A review of `temporal/temporal.go` and the `worker` / `temporal` entry points in
 Scope is the workflow-backed path only; the local `agent.Run` path is unchanged
 and is not under review here.
 
+The rules half of that comparison is the `temporal-go` skill
+([campoy/temporal-go-skill](https://github.com/campoy/temporal-go-skill)), which
+is what the determinism, timeout, retry, payload-limit and versioning findings
+below are measured against. Its `references/pitfalls.md` and
+`references/determinism.md` are the specific sources; where a finding cites a
+limit or a default, the number was checked against the SDK in the module cache
+rather than taken from the skill on faith.
+
 The good news first: **the workflow body itself is deterministic.** No clock, no
 randomness, no I/O, no bare goroutines, no map iteration where order matters.
 `assistant.ToolCalls` is a slice, so iteration order is stable across replay. The
