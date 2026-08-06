@@ -102,6 +102,18 @@ Verification loop after a change: `gofmt -l . && go vet ./... && go build -o gai
 
 The whole `secrets/` directory is gitignored. A live key was once committed and later purged from history via a root-commit rewrite, so prefer explicit paths when staging (`git add main.go`) over `git add -A`.
 
+## The agent team
+
+`.claude/agents/` defines four subagents that split a piece of work between them, coordinated through a `tasks.json` at the repo root. `manager` decomposes a request into tasks and dispatches them; `researcher` fills in each task's context; `implementer` proposes a plan, and once approved builds it and opens the PR; `reviewer` reads the PR and either returns findings or a one-line approval.
+
+Two things hold the workflow together, and both are easy to break.
+
+**Field ownership in `tasks.json`.** Each agent writes only its own section — `research`, `plan`/`branch`/`pr`, `review` — and only the manager advances `status`. Every agent re-reads the file immediately before writing, because more than one may hold it at once; writing back a copy read minutes ago silently drops another agent's work.
+
+**The approval gates.** Subagents have no channel to a human, so "get approval" is a *stop-and-report*: the agent halts and opens its final message with `APPROVAL REQUIRED — <gate> — task <id>`, which the main thread surfaces. There are two gates — the implementation plan, before any code is written, and merge sign-off, after the reviewer approves. Approving a plan authorizes that task's push and PR and nothing further. On approval the agent is resumed via `SendMessage` rather than respawned, so it keeps the context it just built up.
+
+`tasks.json` is gitignored: it is workflow state for a run, not source, and it would otherwise turn up in every PR.
+
 ## Git conventions
 
 - **Commit every large change.** Don't wait to be asked and don't ask for permission each time. A substantial unit of work — a feature, a refactor, a bug fix spanning files — gets its own commit with a descriptive message. Small tweaks and in-progress edits don't.
