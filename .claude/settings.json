@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr review:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/no-secrets-staged.sh",
+            "timeout": 10,
+            "statusMessage": "Checking staged paths"
+          }
+        ]
+      }
+    ]
+  }
+}
