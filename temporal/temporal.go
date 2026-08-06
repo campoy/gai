@@ -65,12 +65,11 @@ func defaultActivityOptions() workflow.ActivityOptions {
 }
 
 // CompletionRequest is the payload used to ask the chat completion activity
-// for a single agent turn. WorkspaceDir is passed explicitly so activities can
-// set up their own ephemeral workspace without embedding secrets in workflow
-// history.
+// for a single agent turn. It carries no workspace: the completion call needs
+// the tool schemas, which are the same wherever the run happens, and never
+// touches a file itself.
 type CompletionRequest struct {
-	Messages     []openai.ChatCompletionMessageParamUnion `json:"messages"`
-	WorkspaceDir string                                   `json:"workspace_dir"`
+	Messages []openai.ChatCompletionMessageParamUnion `json:"messages"`
 }
 
 // CompletionResult is the activity response returned by the chat completion
@@ -83,7 +82,9 @@ type CompletionResult struct {
 
 // ToolInvocation is the payload used to run a single tool activity. The
 // WorkspaceDir field lets the caller request the tool execute in the same
-// ephemeral directory used by the overall run.
+// ephemeral directory used by the overall run. It is opened per invocation and
+// closed over by that invocation's tool set, so two activities running side by
+// side on one worker cannot resolve paths against each other's directory.
 type ToolInvocation struct {
 	Name         string `json:"name"`
 	Arguments    string `json:"arguments"`
@@ -144,7 +145,7 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 
 	for range maxWorkflowSteps {
 		var result *CompletionResult
-		err := workflow.ExecuteActivity(activityCtx, ChatCompletionActivity, CompletionRequest{Messages: messages, WorkspaceDir: workspaceDir}).Get(ctx, &result)
+		err := workflow.ExecuteActivity(activityCtx, ChatCompletionActivity, CompletionRequest{Messages: messages}).Get(ctx, &result)
 		if err != nil {
 			return "", err
 		}
@@ -177,16 +178,28 @@ func AgentWorkflow(ctx workflow.Context, prompt, workspaceDir string) (string, e
 
 // ChatCompletionActivity calls the OpenAI chat completions API from a Temporal activity.
 func ChatCompletionActivity(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
-	if err := tools.SetWorkspace(req.WorkspaceDir); err != nil {
-		return nil, err
-	}
 	key := APIKey()
 	if key == "" {
 		return nil, temporal.NewNonRetryableApplicationError("missing API key", errTypeMissingAPIKey, nil)
 	}
 
+	// This activity needs the tool schemas, not the tools: it puts them on the
+	// request and never dispatches one — RunToolActivity does that, in the
+	// run's own directory. An agent is built whole, though, so it gets a
+	// throwaway workspace of its own that is deleted on the way out. Nothing is
+	// ever written into it.
+	//
+	// It used to call SetWorkspace(req.WorkspaceDir) instead, which reached
+	// into the run's directory to no purpose and widened the window in which
+	// two activities on one worker overwrote each other's.
+	workspace, cleanup, err := tools.NewWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = cleanup() }()
+
 	client := openai.NewClient(option.WithAPIKey(key))
-	ag := agent.New(&client)
+	ag := agent.New(&client, workspace)
 	params := ag.Params()
 	params.Messages = req.Messages
 
@@ -204,16 +217,19 @@ func ChatCompletionActivity(ctx context.Context, req CompletionRequest) (*Comple
 
 // RunToolActivity invokes a registered tool from a Temporal activity.
 func RunToolActivity(ctx context.Context, req ToolInvocation) (string, error) {
-	if err := tools.SetWorkspace(req.WorkspaceDir); err != nil {
-		return "", err
-	}
 	key := APIKey()
 	if key == "" {
 		return "", temporal.NewNonRetryableApplicationError("missing API key", errTypeMissingAPIKey, nil)
 	}
+	workspace, err := tools.OpenWorkspace(req.WorkspaceDir)
+	if err != nil {
+		return "", err
+	}
 
 	client := openai.NewClient(option.WithAPIKey(key))
-	toolsSet := tools.All(&client)
+	// Built per invocation, around this call's own workspace, so concurrent
+	// activities on one worker never share a directory.
+	toolsSet := tools.All(&client, workspace)
 	tool, ok := toolsSet.ByName(req.Name)
 	if !ok {
 		// A name the model invented. Retrying invents nothing new; the workflow

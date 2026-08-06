@@ -46,10 +46,12 @@ func LoadAPIKey(path string) (string, error) {
 }
 
 // An Agent pairs a client with the tools it can call. Tools are built once,
-// here, because some of them need the client themselves — web_search runs a
-// model call of its own — and threading it through at call time would mean
-// either a second parameter on every tool or a package-level client, which is
-// state nobody can see.
+// here, because some of them need state of their own — web_search runs a model
+// call through the client, the file tools resolve every path against a
+// workspace — and threading that through at call time would mean either extra
+// parameters on every tool or package-level variables, which is state nobody
+// can see. Building them here is also what lets two agents run at the same
+// time against two different workspaces.
 type Agent struct {
 	client *openai.Client
 	tools  tools.Tools
@@ -65,9 +67,10 @@ type Agent struct {
 	usedTokens int64
 }
 
-// New returns an agent that calls the API and runs its tools through client.
-func New(client *openai.Client) *Agent {
-	return &Agent{client: client, tools: tools.All(client)}
+// New returns an agent that calls the API through client and confines its file
+// tools to workspace.
+func New(client *openai.Client, workspace tools.Workspace) *Agent {
+	return &Agent{client: client, tools: tools.All(client, workspace)}
 }
 
 // Params returns the request the agent runs with: the model, the tool

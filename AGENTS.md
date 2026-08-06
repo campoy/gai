@@ -26,7 +26,11 @@ The context is the agent loop's, and `runTool` hands over the one `telemetry.Sta
 
 `tools.All` takes an `*openai.Client` because `web_search` makes a model call of its own. A tool needing outside state closes over it at construction — `NewWebSearch(client)` — rather than reading a package-level variable set by an initializer. `agent.New` builds the set once and holds it.
 
-The file tools work in a temporary workspace, not the repository. `tools.NewWorkspace` creates it and returns a cleanup function; `main` calls it once per run, and each eval case calls it per run, deferring the cleanup, so the directory and everything in it is deleted on exit. The file tools fail until it has been called.
+The file tools work in a temporary workspace, not the repository. A `tools.Workspace` is the directory they are confined to, and it is **passed to them at construction** — `tools.All(client, workspace)` builds each one around it, the same way `NewWebSearch(client)` closes over its client. `tools.NewWorkspace` creates a fresh temporary one and returns it with a cleanup function; `main` calls it once per run on the local path, and each eval case calls it per run, deferring the cleanup, so the directory and everything in it is deleted on exit. `tools.OpenWorkspace(dir)` adopts a directory the caller names, creating it if needed and leaving its lifetime to the caller — that is what the Temporal tool activity uses.
+
+The workspace used to be a package-level string set by a `SetWorkspace` initializer. Don't put it back. Two agents in one process — two Temporal activities on one worker, and `worker.Options{}` means up to a thousand of those at once — then race on that string, and a tool call from one run resolves its path against the other's directory. The sandbox still holds in that state; it just guards the wrong directory, so one run reads and writes another's files. `TestWorkspacesAreIndependent` and `TestWorkspacesAreConcurrencySafe` in `tools/file_test.go` pin it down, and `TestAllBuildsEveryFileToolAroundItsWorkspace` in `tools/tools_test.go` pins the other half: that `tools.All` hands the workspace to all four file tools and not just three.
+
+A `Workspace` is an immutable value and each file tool closes over its own copy, which is why nothing here needs a lock. Anything mutable added to it later would have to sit behind a pointer or the copies would drift apart. Its zero value has no directory and is not usable: `resolve` refuses it rather than joining against it, because `filepath.Join("", p)` is `p` — a path relative to the process's working directory, which is the repository `gai` is running in.
 
 Every file tool routes its path through `resolve` in `tools/file.go`, which rejects absolute paths and anything escaping the workspace. The model picks these paths out of untrusted text — never add a file tool that bypasses `resolve`, and keep the tests in `tools/file_test.go` passing.
 
@@ -38,7 +42,7 @@ A failure the model caused — arguments that don't parse, a missing path, a pat
 
 ## The agent loop
 
-`agent.New(client)` returns an `*agent.Agent` holding the client and its tools; `Params` and `Run` are methods on it. `Run` takes `*openai.ChatCompletionNewParams` and appends every turn to it — the assistant message, any tool results, and the final answer. That is what makes the stdin mode a conversation rather than a series of unrelated questions, and what lets the evals transcribe the tool traffic, so don't switch it back to a value receiver.
+`agent.New(client, workspace)` returns an `*agent.Agent` holding the client, the workspace and the tools built around both; `Params` and `Run` are methods on it. `Run` takes `*openai.ChatCompletionNewParams` and appends every turn to it — the assistant message, any tool results, and the final answer. That is what makes the stdin mode a conversation rather than a series of unrelated questions, and what lets the evals transcribe the tool traffic, so don't switch it back to a value receiver.
 
 The loop lives in `agent/` rather than `main` so the evals can drive the code that ships. `agent.Params()` returns the model, tool set, tool choice and system prompt in one place; both the CLI and the evals start from it, the evals overriding only `Temperature`. Anything the agent runs with belongs there, not in `main`.
 
