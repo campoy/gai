@@ -7,3 +7,6 @@ secrets/
 
 # Lavish Editor review artifacts — scratch HTML, not source
 .lavish/
+
+# Agent team workflow state — per-run, not source
+tasks.json
