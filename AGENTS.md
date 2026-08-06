@@ -104,13 +104,19 @@ The whole `secrets/` directory is gitignored. A live key was once committed and 
 
 ## The agent team
 
-`.claude/agents/` defines four subagents that split a piece of work between them, coordinated through a `tasks.json` at the repo root. `manager` decomposes a request into tasks and dispatches them; `researcher` fills in each task's context; `implementer` proposes a plan, and once approved builds it and opens the PR; `reviewer` reads the PR and either returns findings or a one-line approval.
+`.claude/agents/` defines three subagents. `implementer` investigates a task, proposes a plan, and once approved builds it and opens the PR; `reviewer` reads the PR and either returns findings or a one-line approval; `manager` decomposes a multi-task request and dispatches the other two, coordinating through a `tasks.json` at the repo root.
 
-Two things hold the workflow together, and both are easy to break.
+**Send a single task straight to the `implementer`.** The manager is for three or more tasks with real dependencies between them — below that it is a hop in each direction and a second level for every approval gate to unwind through, holding no information the main thread lacks.
 
-**Field ownership in `tasks.json`.** Each agent writes only its own section — `research`, `plan`/`branch`/`pr`, `review` — and only the manager advances `status`. Every agent re-reads the file immediately before writing, because more than one may hold it at once; writing back a copy read minutes ago silently drops another agent's work.
+Four things hold the workflow together.
 
-**The approval gates.** Subagents have no channel to a human, so "get approval" is a *stop-and-report*: the agent halts and opens its final message with `APPROVAL REQUIRED — <gate> — task <id>`, which the main thread surfaces. There are two gates — the implementation plan, before any code is written, and merge sign-off, after the reviewer approves. Approving a plan authorizes that task's push and PR and nothing further. On approval the agent is resumed via `SendMessage` rather than respawned, so it keeps the context it just built up.
+**One writer.** The manager is the only agent that writes `tasks.json`. The others return their plan or review as their final message and the manager records it. That is why they hold no write tools, and it is what makes the file safe without a lock — an earlier design had four agents doing read-modify-write on it and asked them to "re-read immediately before writing," which narrows a race without closing it.
+
+**The tool grant is the enforcement.** A prohibition in an agent's prose is a suggestion; its `tools:` line is the rule. The reviewer cannot edit source because it holds no `Edit` or `Write`, not because it was asked not to, and it cannot merge because `gh pr merge` is denied in `.claude/settings.json`. When you add a rule to one of these files, ask what configuration would make it true, and prefer that.
+
+**The approval gates.** Subagents have no channel to a human, so "get approval" is a *stop-and-report*: the agent halts and opens its final message with `APPROVAL REQUIRED — <gate> — task <id>`, which the main thread surfaces. There are two gates — the implementation plan, before any code is written, and merge sign-off, after the reviewer approves. On approval the agent is resumed via `SendMessage` rather than respawned, so it keeps the context it just built up.
+
+**No `status` field.** State is derived from which fields are populated: no `plan` means unplanned, `approved: false` means waiting at gate 1, a `pr` with no `review` means in review. The manager blocks while each subagent runs, so a status field had one writer and no concurrent readers — a second copy of what `log` already held, free to go stale.
 
 `tasks.json` is gitignored: it is workflow state for a run, not source, and it would otherwise turn up in every PR.
 
@@ -121,7 +127,7 @@ Two things hold the workflow together, and both are easy to break.
 - **No self-attribution anywhere.** Not in commit messages — no `Co-Authored-By: Claude` or any other trailer — and not in pull request titles, bodies or comments: no "Generated with", no tool name, no badge, no emoji sign-off. This holds however the text was produced. The history and the PR queue read as the author's own work.
 - **Work on a feature branch, not `main`.** The repo has a remote — `origin`, `github.com/campoy/gai` — and changes land through a pull request. Branch before the first commit; if you notice you're already on `main` with work in progress, branch and carry it over rather than committing there.
 - **Open the PR when the work is done, not before.** Done means `gofmt -l .` silent, `go vet ./...` and `go test ./...` clean, and the docs in this file, the README and `evals/EVALS.md` updated in the same change. `gh pr create` with a body that explains the reasoning, not just the diff — and a section for what the reviewer should weigh: the trade-offs taken, what wasn't measured, and anything that contradicts a convention written down here.
-- **Push and open PRs only when asked.** Committing on a branch is local and cheap to undo; publishing to GitHub is neither. Ask first, every time — approval to open one PR is not approval for the next.
+- **Push and open PRs only when asked.** Committing on a branch is local and cheap to undo; publishing to GitHub is neither. Ask first, every time — approval to open one PR is not approval for the next. The one standing exception is the `implementer` subagent, where approving the plan at gate 1 *is* the authorization to push that branch and open its PR. That only holds because the gate report is required to say so in a sentence — "approving this also authorizes pushing `<branch>` to origin and opening its PR" — so the human is consenting to the publication rather than having it inferred from consent to an approach. Nothing further is authorized: not a merge, not a second PR.
 - **Stage explicit paths** (`git add main.go`), not `git add -A` or `git add .`, so nothing under `secrets/` can slip in.
 
 ## SDK notes
