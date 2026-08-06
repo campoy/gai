@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/campoy/gai/tools"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
@@ -18,6 +19,19 @@ import (
 // part cutPoint tests cannot: that usage from one response triggers compaction
 // before the next request, and that the request which follows carries the
 // spliced history rather than the original.
+
+// testWorkspace gives an agent a real directory of its own. The stub below
+// never asks for a tool call, so nothing is ever written into it — but a real
+// workspace costs nothing here and keeps these tests from being evidence that
+// an agent can be built without one.
+func testWorkspace(t *testing.T) tools.Workspace {
+	t.Helper()
+	w, err := tools.OpenWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenWorkspace: %v", err)
+	}
+	return w
+}
 
 // request is as much of a chat completion request as these tests inspect.
 type request struct {
@@ -95,7 +109,7 @@ func TestRunCompactsOnceTheBudgetIsPassed(t *testing.T) {
 		reply{content: "third", totalToken: 10},
 	)
 
-	a := New(client)
+	a := New(client, testWorkspace(t))
 	params := a.Params()
 	for _, message := range []string{"one", "two", "three"} {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
@@ -165,7 +179,7 @@ func TestRunDoesNotCompactUnderBudget(t *testing.T) {
 		reply{content: "third", totalToken: compactAfter - 1},
 	)
 
-	a := New(client)
+	a := New(client, testWorkspace(t))
 	params := a.Params()
 	for _, message := range []string{"one", "two", "three"} {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
@@ -192,7 +206,7 @@ func TestRunSurvivesAFailedSummary(t *testing.T) {
 		reply{content: "third", totalToken: 10},
 	)
 
-	a := New(client)
+	a := New(client, testWorkspace(t))
 	params := a.Params()
 	for _, message := range []string{"one", "two", "three"} {
 		params.Messages = append(params.Messages, openai.UserMessage(message))
