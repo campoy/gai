@@ -12,9 +12,11 @@ That framing drives most decisions here: **build from primitives, don't adopt an
 
 The course order is Agent Basics → Tool Calling → Evals → Agent Loop → Multi-Turn Evals → File System Tools → Web Search & Context Management → Shell Tool → Human Guidance & Approvals. The README tracks which modules are done; check it before assuming a capability exists.
 
-`main.go` is the CLI: key loading, the stdin loop, process setup. `agent/` holds the loop itself, the compaction that keeps it affordable, the transcript renderer and the defaults it runs with; `tools/` holds the tool registry; `telemetry/` holds the OpenTelemetry exporter and span helpers; `evals/` holds the eval suite and its notes. No build tooling beyond the Go toolchain.
+`main.go` is the CLI: key loading, subcommand dispatch, the stdin loop, process setup. `agent/` holds the loop itself, the compaction that keeps it affordable, the transcript renderer and the defaults it runs with; `tools/` holds the tool registry; `telemetry/` holds the OpenTelemetry exporter and span helpers; `temporal/` holds the durable second execution path — the same loop expressed as a Temporal workflow over activities; `evals/` holds the eval suite and its notes. Build tooling is the Go toolchain plus one `make lint` target wrapping `scripts/lint.sh`, which mirrors `.github/workflows/go.yml`.
 
 Four documents, each with a job. This file is the working guide — conventions, invariants, and the reasoning behind them. [README.md](README.md) is for someone running `gai` for the first time. [ARCHITECTURE.md](ARCHITECTURE.md) explains how the pieces fit, with diagrams and line-cited claims; it carries figures (line counts, eval scores, a commit hash) that go stale unless a change that moves them updates them. [evals/EVALS.md](evals/EVALS.md) records eval results and what the suite has caught. A change that alters behaviour belongs in whichever of these describe it, in the same commit.
+
+`design/` holds working documents for migrations in flight rather than descriptions of what exists — currently the Temporal migration plan and its review. They are the exception to the rule above: a design document records the intent at the time it was written, so correct it only when the plan itself changes, not when the code catches up to it.
 
 **Check for existing code before writing new code.** Look through the packages and files already in the repo for a type, function, or registry that covers what you need, and extend or reuse it. Do not add a second implementation alongside one that already exists — this happened once with the datetime tool, which was written into `main.go` while `tools/datetime.go` already defined it.
 
@@ -27,6 +29,8 @@ The context is the agent loop's, and `runTool` hands over the one `telemetry.Sta
 `tools.All` takes an `*openai.Client` because `web_search` makes a model call of its own. A tool needing outside state closes over it at construction — `NewWebSearch(client)` — rather than reading a package-level variable set by an initializer. `agent.New` builds the set once and holds it.
 
 The file tools work in a temporary workspace, not the repository. `tools.NewWorkspace` creates it and returns a cleanup function; `main` calls it once per run, and each eval case calls it per run, deferring the cleanup, so the directory and everything in it is deleted on exit. The file tools fail until it has been called.
+
+The Temporal path cannot use that API and does not: a workflow outlives any single process, so the directory has to be named once and re-entered by each activity. `runTemporal` in `main.go` creates it with `os.MkdirTemp` and passes the path through `CompletionRequest.WorkspaceDir` and `ToolInvocation.WorkspaceDir`, and each activity calls `tools.SetWorkspace` on the way in. That is two ways to establish a workspace on purpose — `NewWorkspace` owns a lifetime, `SetWorkspace` adopts one — so reach for `NewWorkspace` anywhere a single process owns the directory, and don't collapse them.
 
 Every file tool routes its path through `resolve` in `tools/file.go`, which rejects absolute paths and anything escaping the workspace. The model picks these paths out of untrusted text — never add a file tool that bypasses `resolve`, and keep the tests in `tools/file_test.go` passing.
 
@@ -51,6 +55,8 @@ Compaction is best-effort everywhere: no safe cut, a failed summary call, an emp
 `agent.Transcribe` renders a conversation as text. It lives in `agent/` because both the evals and the summariser need it and two renderings would drift; it skips the first system message (the persona) and labels later ones as summaries.
 
 With command line arguments `main` answers one prompt and exits; with none, `chat` reads a message per line until stdin closes. The `>` prompt is only printed when stdin is a character device, so piped input produces clean output. The workspace is created once per process, so files written in one message are still there in the next.
+
+Two first arguments are reserved and dispatched before any of that: `worker` runs a Temporal worker, and `temporal <prompt>` runs one prompt through the workflow. Everything else is treated as prompt text, so a new subcommand silently takes that word away from the prompt vocabulary — add one only when the word is implausible as the opening of a question.
 
 ## Evals
 
@@ -80,25 +86,30 @@ To see traces locally, run Jaeger: `docker run --rm -p 16686:16686 -p 4317:4317 
 go build -o gai .            # build
 ./gai "your prompt here"     # run; args are joined into the prompt, stdin if none
 go run . "your prompt here"  # build and run in one step
+./gai worker                 # run a Temporal worker (needs a dev server on 127.0.0.1:7233)
+./gai temporal "prompt"      # run one prompt through the workflow
 
+make lint                    # every check CI runs, in CI's order
 gofmt -w main.go agent/*.go tools/*.go   # format the files you've changed
 gofmt -l .                   # list unformatted files (should print nothing)
 go vet ./...                 # vet
 ```
 
-Before marking a change ready for review, run the standard Go toolchain checks on the repo: `gofmt` for the changed files, `go vet ./...`, `go test ./...`, and `go build -o gai .`. Prefer modern Go constructs when they are clear and idiomatic, but keep the code simple and explicit.
+Before marking a change ready for review, run `make lint`. It wraps `scripts/lint.sh`, which mirrors `.github/workflows/go.yml` step for step: `gofmt -l`, `go vet ./...`, `golint ./...`, `staticcheck ./...`, `go test ./...`, `go build -o gai .`. **`golint` and `staticcheck` gate the PR and the plain `go` toolchain does not run them**, so a change that satisfies `gofmt`, `vet`, `test` and `build` can still fail CI — that gap is the reason to run the target rather than the four commands by hand. The script installs both linters with `go install` if they are missing, so the first run is slow and needs network. Prefer modern Go constructs when they are clear and idiomatic, but keep the code simple and explicit.
+
+If you change what CI checks, change `scripts/lint.sh` in the same commit. The whole value of the target is that the two cannot disagree.
 
 `go test ./...` runs the tests; `go test -run TestName ./...` runs one. What is covered without spending an API call: the file-tool path sandbox (`tools/file_test.go`), the compaction cut rule and its tool pairing (`agent/compact_test.go`), the loop end to end against an `httptest` stub (`agent/run_test.go`), and the context a tool is handed (`agent/tool_test.go`). Everything about how the model behaves is in `evals/`, and is billed.
 
 The evals in `evals/` make real, billed API calls and are skipped unless `-eval` is passed: `go test ./evals/ -eval`, plus `-eval.runs=N` to change how many times each case runs (default 5). Never remove that gate; `go test ./...` must stay free. They read the key from `../secrets/openai-api-key`, since a test binary runs in its own package directory.
 
-Verification loop after a change: `gofmt -l . && go vet ./... && go build -o gai . && ./gai "Reply with exactly: pong"`. The last step makes a real, billed API call — it is the only way to confirm the client wiring works, but skip it for changes that can't affect the request path.
+Verification loop after a change: `make lint && ./gai "Reply with exactly: pong"`. The last step makes a real, billed API call — it is the only way to confirm the client wiring works, but skip it for changes that can't affect the request path. While iterating, `gofmt -l . && go vet ./... && go test ./...` is the fast subset; run the full target before opening the PR.
 
 ## API key handling
 
 `agent.LoadAPIKey` reads the file named by `apiKeyPath` in `main.go` — `secrets/openai-api-key`, containing **nothing but the raw key**, no `KEY=value` wrapper, trailing whitespace trimmed. This replaced an earlier `.env`-style format; don't reintroduce env-file parsing. It takes the path as an argument because the evals run from their own package directory and pass `../secrets/openai-api-key`.
 
-`apiKeyPath` is a relative path, so **the binary only works when run from the repo root**. If you add subcommands or move the entry point, this is the first thing that breaks.
+`apiKeyPath` is a relative path, so **the binary only works when run from the repo root**. That applies to every subcommand: `main` loads the key before it dispatches, so `./gai worker` and `./gai temporal` fail from anywhere else too, and the worker passes the key it read on to `gaitemporal.ConfigureAPIKey`. Moving the entry point breaks all three at once.
 
 The whole `secrets/` directory is gitignored. A live key was once committed and later purged from history via a root-commit rewrite, so prefer explicit paths when staging (`git add main.go`) over `git add -A`.
 
@@ -126,7 +137,7 @@ Four things hold the workflow together.
 - **Write a body, not just a subject.** Any commit worth making on its own gets a short paragraph explaining what changed and why — the reasoning that isn't visible in the diff. Trivial one-liners can stay subject-only.
 - **No self-attribution anywhere.** Not in commit messages — no `Co-Authored-By: Claude` or any other trailer — and not in pull request titles, bodies or comments: no "Generated with", no tool name, no badge, no emoji sign-off. This holds however the text was produced. The history and the PR queue read as the author's own work.
 - **Work on a feature branch, not `main`.** The repo has a remote — `origin`, `github.com/campoy/gai` — and changes land through a pull request. Branch before the first commit; if you notice you're already on `main` with work in progress, branch and carry it over rather than committing there.
-- **Open the PR when the work is done, not before.** Done means `gofmt -l .` silent, `go vet ./...` and `go test ./...` clean, and the docs in this file, the README and `evals/EVALS.md` updated in the same change. `gh pr create` with a body that explains the reasoning, not just the diff — and a section for what the reviewer should weigh: the trade-offs taken, what wasn't measured, and anything that contradicts a convention written down here.
+- **Open the PR when the work is done, not before.** Done means `make lint` green — which is `gofmt`, `vet`, `golint`, `staticcheck`, `test` and `build`, the same set CI runs — and the docs in this file, the README and `evals/EVALS.md` updated in the same change. `gh pr create` with a body that explains the reasoning, not just the diff — and a section for what the reviewer should weigh: the trade-offs taken, what wasn't measured, and anything that contradicts a convention written down here.
 - **Push and open PRs only when asked.** Committing on a branch is local and cheap to undo; publishing to GitHub is neither. Ask first, every time — approval to open one PR is not approval for the next. The one standing exception is the `implementer` subagent, where approving the plan at gate 1 *is* the authorization to push that branch and open its PR. That only holds because the gate report is required to say so in a sentence — "approving this also authorizes pushing `<branch>` to origin and opening its PR" — so the human is consenting to the publication rather than having it inferred from consent to an approach. Nothing further is authorized: not a merge, not a second PR.
 - **Stage explicit paths** (`git add main.go`), not `git add -A` or `git add .`, so nothing under `secrets/` can slip in.
 

@@ -2,12 +2,12 @@
 
 `gai` is a Go port of [AI Agents Fundamentals, v2](https://frontendmasters.com/courses/ai-agents-v2). The organising constraint is stated in [AGENTS.md](AGENTS.md): **build from primitives, don't adopt an agent framework.** Every choice below follows from that — the loop, the tool dispatch, the sandbox and the eval harness are all hand-written over the standard library and one SDK.
 
-Every claim cites the file and line it came from. Figures are from commit `e415b7d`.
+Every claim cites the file and line it came from. Figures are from commit `ed0ccee`.
 
 | | |
 | --- | --- |
-| Production Go | 1173 lines across 10 files |
-| Test & eval Go | 1648 lines — more than the program itself |
+| Production Go | 1504 lines across 11 files |
+| Test & eval Go | 1873 lines — more than the program itself |
 | Direct dependencies | 5 (`openai-go` + 4× `otel`) |
 | Tools exposed to the model | 6 (1 clock, 4 file, 1 search) |
 
@@ -15,7 +15,7 @@ Every claim cites the file and line it came from. Figures are from commit `e415b
 
 ## 1. What talks to what
 
-Four packages, one direction of dependency. `main` owns process lifecycle only; it creates three things that must be torn down (telemetry, workspace, client), then hands control to the agent. Nothing in `agent/` or `tools/` reaches back up to the CLI — which is what lets the evals drive the identical code path.
+Five packages, one direction of dependency. `main` owns process lifecycle only; it creates three things that must be torn down (telemetry, workspace, client), then hands control to the agent. Nothing in `agent/` or `tools/` reaches back up to the CLI — which is what lets the evals drive the identical code path. The diagram below traces the default in-process path; `temporal/` is a second entry point into the same tools and the same model calls, reached only through the `worker` and `temporal` subcommands.
 
 ```mermaid
 flowchart TD
@@ -50,13 +50,16 @@ flowchart TD
 
 | Package | Owns | Key symbols | Lines |
 | --- | --- | --- | ---: |
-| `main` | Process lifecycle: key file, telemetry init + bounded flush, workspace create/cleanup, argv-vs-stdin dispatch. | `main`, `chat` | 114 |
+| `main` | Process lifecycle: key file, telemetry init + bounded flush, workspace create/cleanup, subcommand and argv-vs-stdin dispatch. | `main`, `chat`, `runWorker`, `runTemporal` | 179 |
 | `agent` | The loop, the compaction that keeps it affordable, the transcript renderer, the defaults it runs with, and the API-key reader. Deliberately outside `main` so evals can drive it. | `New`, `Params`, `Run`, `runTool`, `compact`, `cutPoint`, `Transcribe`, `SystemPrompt`, `Model` | 386 |
-| `tools` | The registry type, the six tools, and the workspace sandbox they are confined to. | `Tool`, `Tools`, `Function`, `All`, `ByName`, `NewWorkspace`, `resolve` | 474 |
+| `tools` | The registry type, the six tools, the workspace sandbox they are confined to, and the invalid-argument sentinel that marks a failure as the model's fault. | `Tool`, `Tools`, `Function`, `All`, `ByName`, `NewWorkspace`, `SetWorkspace`, `resolve`, `ErrInvalidArgument` | 507 |
 | `telemetry` | Tracer provider + OTLP exporter, and GenAI-convention span helpers for model and tool calls. | `Init`, `WithEndpoint`, `WithExporter`, `StartLLM`, `EndLLM`, `StartTool` | 199 |
+| `temporal` | The same loop as a durable workflow: model calls and tool calls become activities, so a crash resumes from history instead of restarting. | `AgentWorkflow`, `ChatCompletionActivity`, `RunToolActivity`, `NewWorker`, `NewClient`, `Register` | 233 |
 | `evals` | Test-only. Trajectory scoring and LLM-judged multi-turn conversations, gated behind `-eval`. | `TestEval`, `TestJudgeConversations`, `runCase`, `converse`, `judge` | 954 |
 
-Line counts are production code per package; `evals` is test-only, and the `agent` and `tools` figures exclude their tests.
+Line counts are production code per package; `evals` is test-only, and the other figures exclude their tests.
+
+Sections 2 onward describe the in-process path only. The `temporal` package is the newer of the two and has no section of its own yet; [design/temporal-migration-plan.md](design/temporal-migration-plan.md) is the current reference for it.
 
 ---
 
