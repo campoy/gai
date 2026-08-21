@@ -285,7 +285,7 @@ the second wastes time and money, the rest is drift and blind spots.
       documented hard constraint. Everything below in this group depends on the
       answer, so it comes first even though it is a decision rather than a diff.
 - [x] **Remove the package-level workspace from the file tools** (finding 1).
-      Done: `tools.Workspace` is an immutable value the file tools are built
+      Done: a `*tools.Workspace` is what the file tools are built
       around (`tools.All(client, ws)`), `SetWorkspace` and the package variable
       are gone, and `RunToolActivity` opens its own per invocation. Deletes the
       data race and the cross-run file corruption together.

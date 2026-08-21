@@ -48,38 +48,48 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-// TestZeroWorkspaceReachesNothing is the sandbox's floor. A Workspace only ever
-// comes from NewWorkspace or OpenWorkspace, so the zero value means the tools
-// were built wrong — but if it ever reached filepath.Join it would resolve
-// against the process's own working directory, which is the repository gai is
-// running in. Every file tool has to refuse it, and refuse it without writing
-// anything.
-func TestZeroWorkspaceReachesNothing(t *testing.T) {
-	var zero Workspace
+// TestWorkspacelessToolsReachNothing is the sandbox's floor. A usable workspace
+// only ever comes from NewWorkspace or OpenWorkspace, and both report failure
+// as a nil pointer, so a workspaceless tool means either the nil was ignored or
+// a Workspace was built by hand. Either way, if that reached filepath.Join it
+// would resolve against the process's own working directory, which is the
+// repository gai is running in. Every file tool has to refuse it, and refuse it
+// without writing anything.
+func TestWorkspacelessToolsReachNothing(t *testing.T) {
 	ctx := t.Context()
-
-	if got, err := zero.resolve("notes.md"); err == nil {
-		t.Errorf("resolve with no workspace = %q, want error", got)
-	}
 
 	// A name nothing else would create, so finding it afterwards means a tool
 	// wrote into the working directory rather than into a workspace.
-	const probe = "gai-zero-workspace-probe.md"
+	const probe = "gai-no-workspace-probe.md"
 	t.Cleanup(func() { _ = os.Remove(probe) })
 
-	for _, c := range []struct {
+	for _, w := range []struct {
 		name string
-		fn   Function
-		args string
+		w    *Workspace
 	}{
-		{"read_file", zero.readFile, fmt.Sprintf(`{"path":%q}`, probe)},
-		{"write_file", zero.writeFile, fmt.Sprintf(`{"path":%q,"content":"escaped"}`, probe)},
-		{"list_files", zero.listFiles, `{}`},
-		{"delete_file", zero.deleteFile, fmt.Sprintf(`{"path":%q}`, probe)},
+		{"nil", nil},
+		{"no directory", &Workspace{}},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got, err := c.fn(ctx, c.args); err == nil {
-				t.Errorf("%s with no workspace = %q, want error", c.name, got)
+		t.Run(w.name, func(t *testing.T) {
+			if got, err := w.w.resolve("notes.md"); err == nil {
+				t.Errorf("resolve with no workspace = %q, want error", got)
+			}
+
+			for _, c := range []struct {
+				name string
+				fn   Function
+				args string
+			}{
+				{"read_file", w.w.readFile, fmt.Sprintf(`{"path":%q}`, probe)},
+				{"write_file", w.w.writeFile, fmt.Sprintf(`{"path":%q,"content":"escaped"}`, probe)},
+				{"list_files", w.w.listFiles, `{}`},
+				{"delete_file", w.w.deleteFile, fmt.Sprintf(`{"path":%q}`, probe)},
+			} {
+				t.Run(c.name, func(t *testing.T) {
+					if got, err := c.fn(ctx, c.args); err == nil {
+						t.Errorf("%s with no workspace = %q, want error", c.name, got)
+					}
+				})
 			}
 		})
 	}
@@ -89,10 +99,10 @@ func TestZeroWorkspaceReachesNothing(t *testing.T) {
 	}
 }
 
-// TestWorkspacesAreIndependent pins down what the workspace being a value
-// rather than package state buys: two of them live at once, each tool confined
-// to its own directory. Two Temporal activities on one worker used to share a
-// directory, and read and wrote each other's files.
+// TestWorkspacesAreIndependent pins down what handing the workspace to the
+// tools rather than keeping it in package state buys: two of them live at once,
+// each tool confined to its own directory. Two Temporal activities on one
+// worker used to share a directory, and read and wrote each other's files.
 func TestWorkspacesAreIndependent(t *testing.T) {
 	a, b := newTestWorkspace(t), newTestWorkspace(t)
 	ctx := t.Context()
@@ -106,7 +116,7 @@ func TestWorkspacesAreIndependent(t *testing.T) {
 
 	for _, c := range []struct {
 		name string
-		w    Workspace
+		w    *Workspace
 		want string
 	}{
 		{"a", a, "a's notes"},
@@ -142,7 +152,7 @@ func TestWorkspacesAreConcurrencySafe(t *testing.T) {
 		workers = 4
 		rounds  = 25
 	)
-	workspaces := make([]Workspace, workers)
+	workspaces := make([]*Workspace, workers)
 	for i := range workspaces {
 		workspaces[i] = newTestWorkspace(t)
 	}
@@ -241,7 +251,7 @@ func TestWriteFileRefusesToClobber(t *testing.T) {
 }
 
 // newTestWorkspace creates a workspace and removes it when the test ends.
-func newTestWorkspace(t *testing.T) Workspace {
+func newTestWorkspace(t *testing.T) *Workspace {
 	t.Helper()
 	w, cleanup, err := NewWorkspace()
 	if err != nil {

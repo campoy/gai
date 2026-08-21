@@ -205,7 +205,7 @@ The context is the loop's own, taken from the tool span rather than the message 
 | `delete_file` | `path` | **Irreversible.** Files only; no approval step exists yet. |
 | `web_search` | `query` | Second model call to a search-preview model; returns prose + deduped source URLs. |
 
-**Dependencies close over, not global.** `All(client, workspace)` takes the client because `web_search` needs one of its own and the workspace because the file tools resolve every path against one; `NewWebSearch(client)` and `NewReadFile(workspace)` capture them in closures rather than reading package-level variables. `agent.New` builds the set once and holds it — `tools/tools.go:82`, `tools/websearch.go:26`, `tools/file.go:66`.
+**Dependencies close over, not global.** `All(client, workspace)` takes the client because `web_search` needs one of its own and the workspace because the file tools resolve every path against one; `NewWebSearch(client)` and `NewReadFile(workspace)` capture them in closures rather than reading package-level variables. `agent.New` builds the set once and holds it — `tools/tools.go:82`, `tools/websearch.go:26`, `tools/file.go:74`.
 
 **Why search is a tool, not the agent.** The search-preview models can't do function calling, so they can't run the main loop. Wrapping one in a tool is the only way to have both. The citations are passed through so a searched claim is distinguishable from a remembered one — `tools/websearch.go:17–19, 81–94`.
 
@@ -215,12 +215,12 @@ The context is the loop's own, taken from the tool span rather than the message 
 
 This is the security-relevant part of the codebase. The file tools do not operate on the repository — they operate on an `os.MkdirTemp` directory created per run and deleted at the end of it. The model picks paths out of untrusted text, so *every* file tool routes through one chokepoint.
 
-The directory is a `Workspace` value the tools are **built around**, not package state: `tools.All(client, ws)` hands it to each file tool, which resolves against its own copy. Two agents in one process — two Temporal activities on one worker — therefore cannot resolve paths against each other's directory. It was a package-level string, written by a `SetWorkspace` initializer, until finding 1 of [design/temporal-review.md](design/temporal-review.md); `TestWorkspacesAreIndependent`, `TestWorkspacesAreConcurrencySafe` and `TestAllBuildsEveryFileToolAroundItsWorkspace` are what keep it from going back.
+The directory is a `*Workspace` the tools are **built around**, not package state: `tools.All(client, ws)` hands it to each file tool, which resolves against the one it was given. Two agents in one process — two Temporal activities on one worker — therefore cannot resolve paths against each other's directory. It was a package-level string, written by a `SetWorkspace` initializer, until finding 1 of [design/temporal-review.md](design/temporal-review.md); `TestWorkspacesAreIndependent`, `TestWorkspacesAreConcurrencySafe` and `TestAllBuildsEveryFileToolAroundItsWorkspace` are what keep it from going back.
 
 ```mermaid
 flowchart TD
   p["model-supplied path"] --> c1{"workspace has a directory?"}
-  c1 -- no --> e1["error: built around the<br/>zero-value Workspace"]
+  c1 -- no --> e1["error: built around a<br/>nil Workspace"]
   c1 -- yes --> c2{"path empty?"}
   c2 -- yes --> e2["error: path is required"]
   c2 -- no --> c3{"filepath.IsAbs?"}
@@ -233,11 +233,11 @@ flowchart TD
 
 > **Invariant.** Never add a file tool that bypasses `resolve`. `tools/file_test.go` pins the traversal cases; keep it passing.
 
-**Lifetime, not just location.** `NewWorkspace` returns the workspace and a cleanup closure that `RemoveAll`s the directory. `main` defers it once per process on the local path; each eval case defers its own; `ChatCompletionActivity` takes one for the length of a single model call, because an agent is built whole even when only its tool schemas are wanted. `OpenWorkspace(dir)` is the other constructor — it adopts a directory the caller named, creating it if absent, and returns no cleanup because the caller owns the lifetime; the Temporal tool activity opens one per invocation. The workspace starting empty is also why `write_file` has to `MkdirAll` the parent of any nested path — `tools/file.go:24–66, 172–175`.
+**Lifetime, not just location.** `NewWorkspace` returns the workspace and a cleanup closure that `RemoveAll`s the directory. `main` defers it once per process on the local path; each eval case defers its own; `ChatCompletionActivity` takes one for the length of a single model call, because an agent is built whole even when only its tool schemas are wanted. `OpenWorkspace(dir)` is the other constructor — it adopts a directory the caller named, creating it if absent, and returns no cleanup because the caller owns the lifetime; the Temporal tool activity opens one per invocation. The workspace starting empty is also why `write_file` has to `MkdirAll` the parent of any nested path — `tools/file.go:19–71, 179–182`.
 
 **Consequence worth stating out loud.** The agent cannot read this repository — only files it created itself. Nothing it writes survives the run. That is a deliberate scope limit for a workshop port, and it is what the Shell Tool module will have to renegotiate.
 
-`tools/file.go:265–296` — the chokepoint:
+`tools/file.go:273–304` — the chokepoint:
 
 ```go
 // resolve turns a model-supplied path into an absolute one inside the
@@ -245,15 +245,15 @@ flowchart TD
 // these paths from text it was given, so they are untrusted.
 //
 // Every rejection here is an ErrInvalidArgument: the path is the argument, and
-// no amount of running the call again makes a bad one good. The zero-value
-// workspace is the exception — that is the tools being built wrong, not the
+// no amount of running the call again makes a bad one good. A workspace with
+// no directory is the exception — that is the tools being built wrong, not the
 // model calling wrong. It is refused rather than joined against, because
 // filepath.Join("", p) is p, a path relative to the process's own working
 // directory: the sandbox would not merely guard the wrong directory, it would
 // hand the agent the one gai is running in.
-func (w Workspace) resolve(path string) (string, error) {
-	if w.dir == "" {
-		return "", fmt.Errorf("no workspace: these file tools were built around the zero-value Workspace; use NewWorkspace or OpenWorkspace")
+func (w *Workspace) resolve(path string) (string, error) {
+	if w == nil || w.dir == "" {
+		return "", fmt.Errorf("no workspace: these file tools were built around a nil Workspace; use NewWorkspace or OpenWorkspace")
 	}
 	if path == "" {
 		return "", fmt.Errorf("%w: path is required", ErrInvalidArgument)

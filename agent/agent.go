@@ -69,7 +69,7 @@ type Agent struct {
 
 // New returns an agent that calls the API through client and confines its file
 // tools to workspace.
-func New(client *openai.Client, workspace tools.Workspace) *Agent {
+func New(client *openai.Client, workspace *tools.Workspace) *Agent {
 	return &Agent{client: client, tools: tools.All(client, workspace)}
 }
 

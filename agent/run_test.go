@@ -24,7 +24,7 @@ import (
 // never asks for a tool call, so nothing is ever written into it — but a real
 // workspace costs nothing here and keeps these tests from being evidence that
 // an agent can be built without one.
-func testWorkspace(t *testing.T) tools.Workspace {
+func testWorkspace(t *testing.T) *tools.Workspace {
 	t.Helper()
 	w, err := tools.OpenWorkspace(t.TempDir())
 	if err != nil {

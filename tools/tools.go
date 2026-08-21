@@ -79,7 +79,7 @@ func (ts Tools) AsToolParams() []openai.ChatCompletionToolParam {
 // tools resolve every path against one. Both are closed over as the tools are
 // built, so two sets built here are independent: two agents in one process
 // never share a directory, and neither reads state the other can write.
-func All(client *openai.Client, workspace Workspace) Tools {
+func All(client *openai.Client, workspace *Workspace) Tools {
 	return Tools{
 		DateTime,
 		NewReadFile(workspace),
