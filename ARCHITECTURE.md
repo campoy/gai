@@ -6,7 +6,7 @@ Every claim cites the file and line it came from. Figures are from commit `ed0cc
 
 | | |
 | --- | --- |
-| Production Go | 1504 lines across 11 files |
+| Production Go | 1564 lines across 11 files |
 | Test & eval Go | 1873 lines — more than the program itself |
 | Direct dependencies | 5 (`openai-go` + 4× `otel`) |
 | Tools exposed to the model | 6 (1 clock, 4 file, 1 search) |
@@ -50,16 +50,16 @@ flowchart TD
 
 | Package | Owns | Key symbols | Lines |
 | --- | --- | --- | ---: |
-| `main` | Process lifecycle: key file, telemetry init + bounded flush, workspace create/cleanup, subcommand and argv-vs-stdin dispatch. | `main`, `chat`, `runWorker`, `runTemporal` | 179 |
-| `agent` | The loop, the compaction that keeps it affordable, the transcript renderer, the defaults it runs with, and the API-key reader. Deliberately outside `main` so evals can drive it. | `New`, `Params`, `Run`, `runTool`, `compact`, `cutPoint`, `Transcribe`, `SystemPrompt`, `Model` | 386 |
-| `tools` | The registry type, the six tools, the workspace sandbox they are confined to, and the invalid-argument sentinel that marks a failure as the model's fault. | `Tool`, `Tools`, `Function`, `All`, `ByName`, `NewWorkspace`, `SetWorkspace`, `resolve`, `ErrInvalidArgument` | 507 |
+| `main` | Process lifecycle: key file, telemetry init + bounded flush, workspace create/cleanup, subcommand and argv-vs-stdin dispatch. | `main`, `chat`, `runWorker`, `runTemporal` | 182 |
+| `agent` | The loop, the compaction that keeps it affordable, the transcript renderer, the defaults it runs with, and the API-key reader. Deliberately outside `main` so evals can drive it. | `New`, `Params`, `Run`, `runTool`, `compact`, `cutPoint`, `Transcribe`, `SystemPrompt`, `Model` | 389 |
+| `tools` | The registry type, the six tools, the workspace sandbox they are confined to, and the invalid-argument sentinel that marks a failure as the model's fault. | `Tool`, `Tools`, `Function`, `All`, `ByName`, `NewWorkspace`, `OpenWorkspace`, `resolve`, `ErrInvalidArgument` | 545 |
 | `telemetry` | Tracer provider + OTLP exporter, and GenAI-convention span helpers for model and tool calls. | `Init`, `WithEndpoint`, `WithExporter`, `StartLLM`, `EndLLM`, `StartTool` | 199 |
-| `temporal` | The same loop as a durable workflow: model calls and tool calls become activities, so a crash resumes from history instead of restarting. | `AgentWorkflow`, `ChatCompletionActivity`, `RunToolActivity`, `NewWorker`, `NewClient`, `Register` | 233 |
+| `temporal` | The same loop as a durable workflow: model calls and tool calls become activities, so a crash resumes from history instead of restarting. | `AgentWorkflow`, `ChatCompletionActivity`, `RunToolActivity`, `NewWorker`, `NewClient`, `Register` | 249 |
 | `evals` | Test-only. Trajectory scoring and LLM-judged multi-turn conversations, gated behind `-eval`. | `TestEval`, `TestJudgeConversations`, `runCase`, `converse`, `judge` | 954 |
 
 Line counts are production code per package; `evals` is test-only, and the other figures exclude their tests.
 
-Sections 2 onward describe the in-process path only. The `temporal` package is the newer of the two and has no section of its own yet; [design/temporal-migration-plan.md](design/temporal-migration-plan.md) is the current reference for it.
+Sections 2 to 6 describe the in-process path only; [§7](#7-the-same-loop-made-durable) covers the workflow one.
 
 ---
 
@@ -280,9 +280,10 @@ func (w *Workspace) resolve(path string) (string, error) {
 The `ErrInvalidArgument` wrapping is what lets the Temporal path fail an argument
 mistake without spending its retry budget; the missing-workspace case is
 deliberately left unwrapped, since a retry of a miswired tool set is no more
-absurd than any other. See AGENTS.md, *Tools*.
+absurd than any other. [§7](#7-the-same-loop-made-durable) is where that budget
+lives; AGENTS.md, *Tools*, states the rule for new tools.
 
-`tools/file.go:161–170` — the clobber guard the evals forced:
+`tools/file.go:169–178` — the clobber guard the evals forced:
 
 ```go
 // Refuse to clobber a file the model has not acknowledged. Describing the
@@ -328,9 +329,100 @@ flowchart TD
 
 ---
 
-## 7. Two eval suites, two different questions
+## 7. The same loop, made durable
 
-Neither suite scores prose — with a persona system prompt the wording varies wildly and none of that variation is what breaks. Both go through `agent.New`, `Params()` and `SystemPrompt`, so a change to the model, the tool set or the prompt is scored rather than sidestepped. Both are gated behind `-eval` because they make real, billed calls.
+`temporal/` is the second execution path: the loop expressed as a Temporal workflow, with every step that touches the outside world moved into an activity. It is reached only through two subcommands — `gai worker` runs a worker, `gai temporal "…"` starts one execution and blocks on its result — and it is not the default. With no subcommand, `main` falls through the switch (`main.go:55–73`) and builds an `agent.Agent` and calls `Run` exactly as before (`main.go:90–109`); the two subcommand bodies are `runWorker` (`main.go:112`) and `runTemporal` (`main.go:126`).
+
+**What the split buys.** Temporal records an activity's input and its result in Event History before the workflow ever sees the result. Kill the worker mid-run and the execution continues on the next one to pick the task up: the workflow function is re-executed from the top, but every activity that already completed is answered out of history instead of being called again. A crash resumes rather than restarts — and, the part that matters when each step is a billed model call, the tokens already spent are not spent twice. Everything else in this section is the cost of that one property.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as gai temporal
+  participant H as Temporal service<br/>Event History
+  participant W as AgentWorkflow<br/>workflow code, replayed
+  participant A as activities<br/>worker process
+  participant M as OpenAI
+
+  C->>H: ExecuteWorkflow(prompt, workspaceDir)
+  H->>W: start, or replay after a crash
+  loop at most maxWorkflowSteps = 10
+    W->>H: ExecuteActivity ChatCompletionActivity<br/>(whole history, no workspace)
+    H->>A: schedule — or answer from history on replay
+    A->>M: Chat.Completions.New
+    M-->>A: choice[0].Message
+    A-->>H: CompletionResult, recorded
+    H-->>W: result
+    alt no tool calls
+      W-->>H: workflow complete
+      H-->>C: answer
+    else one or more tool calls
+      W->>H: ExecuteActivity RunToolActivity, one per call
+      H->>A: schedule — or answer from history on replay
+      A-->>H: output, or a failure typed retryable / not
+      H-->>W: appended as a tool message either way
+    end
+  end
+  Note over H,W: W reaches the model and the tools only by asking H,<br/>so a crash replays the asking and not the doing
+```
+
+**Where the two loops diverge.** `AgentWorkflow` re-derives `agent.Run` rather than calling it — a deliberate migration stage, recorded as one in `design/temporal-migration-plan.md:35–48` — so the shapes match and the details drift.
+
+| | In-process — `agent.Run` | Workflow — `AgentWorkflow` |
+| --- | --- | --- |
+| History lives in | the caller's params, by pointer — `agent/agent.go:109, 135` | a local slice, rebuilt by replay — `temporal/temporal.go:141` |
+| Step cap | `maxSteps = 10` — `agent/agent.go:30` | `maxWorkflowSteps = 10`, a second constant — `temporal/temporal.go:29` |
+| Model call | one client, held by the `Agent` — `agent/agent.go:120` | a client built per activity invocation — `temporal/temporal.go:201, 229` |
+| Tool dispatch | `runTool` over a registry built once — `agent/agent.go:73, 159` | `tools.All` rebuilt per invocation, around that call's own workspace — `temporal/temporal.go:232` |
+| A tool failure reaches the model | immediately, as `"error: …"` — `agent/agent.go:163–166` | as `"error: …"`, once the retry policy is exhausted — `temporal/temporal.go:169` |
+| Compaction | every step, before asking — `agent/agent.go:117` | never; `Usage` is returned and never read — `temporal/temporal.go:80` |
+| Telemetry | `agent`, LLM and tool spans — `agent/agent.go:110, 119, 156` | none; the package imports no telemetry — `temporal/temporal.go:4–18` |
+| Model, tools, temperature | `Params()` — `agent/agent.go:80` | the same `Params()`, `Messages` replaced — `temporal/temporal.go:203–204` |
+
+The last row is the one that keeps the drift bounded: the activity builds its request from `agent.Params()` and only then overwrites `Messages`, so the model, the tool schemas, the tool choice and the temperature are the shipped ones. What has already drifted is the step cap — two constants, both `10`, with nothing tying them together.
+
+**Why the history is a local variable here.** [§2](#2-the-agent-loop) turns on `Run` appending to the caller's params through a pointer, which is what makes a process-lifetime conversation out of a stateless API. A workflow has no caller to share memory with and may not be in memory at all, so `messages` is an ordinary slice built from scratch every time the function runs — `temporal/temporal.go:141–144`. It survives a crash not because anything holds it, but because the activity inputs and results that produced it are in Event History.
+
+That inverts the cost. Each step ships the entire history as an activity input (`:148`), and Temporal records every activity input permanently, so bytes written grow with the square of the step count. Compaction is what would bound it, and compaction is the one part of `agent.Run` this path does not have: `CompletionResult.Usage` is carried back precisely so the workflow can decide when to compact (`:78–81`), and nothing reads it. With `read_file` returning up to 64 KiB a call, that is a question about Temporal's payload limit, not only about the bill — `design/temporal-review.md:123–144`.
+
+**Determinism, and what actually pins it.** Workflow code is re-executed on every replay, so it has to issue the same sequence of commands each time; a clock reading, a random number, an unordered map iteration or a direct API call would make the replay diverge from the recorded run. `AgentWorkflow` respects that — no I/O, no clock, and `assistant.ToolCalls` is a slice, so tool dispatch order is stable — `temporal/temporal.go:138–176`, checked against the SDK's rules in `design/temporal-review.md:16–20`.
+
+Nothing enforces it. That is the honest reading of `temporal/replayer_test.go`: it registers the workflow with `worker.NewWorkflowReplayer` and asserts the signature is accepted (`:13–17`), while the replay that would catch a determinism regression is skipped for want of a recorded history under `temporal/testdata/` (`:22–24`). It holds the seam open; it does not guard it. `temporal/temporal_test.go:11–32` sits in the same place — it asserts `defaultActivityOptions()` returns the constants it is built from, and would still pass with `AgentWorkflow` deleted.
+
+> **Not an invariant yet.** The workflow body is deterministic by inspection and by review, not by test. Add a `workflow.Now`, a bare goroutine or a direct API call to it and a running execution breaks with nothing in this repo failing first.
+
+**Retries, and the failures that must not have any.** One options struct covers both activities: a five-minute start-to-close timeout, at most three attempts, backing off from 1s by 2× to a 30s ceiling — `temporal/temporal.go:53–65`. That budget exists for failures a second attempt might survive — a dropped connection, a rate limit, a worker that died mid-call.
+
+A failure the *model* caused survives nothing, and the backoff spent discovering that is pure latency. Those come back as `temporal.NewNonRetryableApplicationError` carrying a stable type string, which is what Event History and the Temporal UI show the run failed as — `temporal/temporal.go:41–46`.
+
+| Type recorded in history | Raised when | Where |
+| --- | --- | --- |
+| `MissingAPIKey` | an activity ran on a worker that never called `ConfigureAPIKey` | `temporal/temporal.go:183, 222` |
+| `NoChoicesReturned` | the model answered with an empty `Choices` | `temporal/temporal.go:211` |
+| `UnknownTool` | the model invented a tool name | `temporal/temporal.go:237–238` |
+| `InvalidToolArguments` | the tool failed with `tools.ErrInvalidArgument` | `temporal/temporal.go:245–246` |
+
+The last row is the only one that crosses a package boundary. `tools` marks a failure as the model's fault by wrapping `ErrInvalidArgument` — an unparseable argument, a missing path, a path that escapes the workspace (`tools/tools.go:21`, `tools/file.go:288–301`). It is a plain sentinel rather than a Temporal error type so that `tools/` never imports the Temporal SDK, and `RunToolActivity` is the single place that translates it (`temporal/temporal.go:245–246`). Everything else keeps its retries on purpose: a rate-limited `web_search` and a missing file both stay retryable. `tools/errors_test.go:12–72` pins the marking, `temporal/temporal_test.go:43–101` pins the translation — including the case that must *not* be translated.
+
+The local loop draws no such line: `runTool` turns every failure into `"error: …"` text and lets the model recover. The workflow reaches the same place, appending the failure as a tool message and carrying on (`temporal/temporal.go:167–170`); the classification only decides how long it took to get there.
+
+One policy covers both activities, though, and what is right for the model call is wrong for a mutating tool. Activity delivery is at-least-once, so a `write_file` whose completion is lost to a partition runs a second time, refuses to clobber the file it just wrote ([§5](#5-the-workspace-boundary)), and reports a failure for an operation that in fact succeeded — `design/temporal-review.md:100–121`.
+
+**The workspace is a path string, not a directory.** [§5](#5-the-workspace-boundary)'s `NewWorkspace` owns a lifetime — it creates a directory and hands back the closure that deletes it. Nothing here spans the run to hold that closure, so the path is named once and re-opened instead: `runTemporal` creates the directory with `os.MkdirTemp` in the *client* process and passes its path as a workflow argument (`main.go:127, 140–143`), the workflow puts it in every tool payload (`ToolInvocation.WorkspaceDir` — `temporal/temporal.go:83–92, 167`), and `RunToolActivity` calls `tools.OpenWorkspace` on the way in, which `MkdirAll`s whatever is not there (`temporal/temporal.go:224`, `tools/file.go:54–63`).
+
+Only the tool activity gets it. `CompletionRequest` carries no workspace at all (`temporal/temporal.go:67–73`): that activity wants the tool *schemas*, which are the same wherever the run happens, so it builds its agent around a throwaway workspace of its own and deletes it on the way out (`:186–199`). Nothing is ever written into it.
+
+What the two processes share is therefore the string, not the directory, and they name the same files only when a single worker runs on the client's own filesystem. With the worker elsewhere, the client deletes an empty directory of its own making and the real one is stranded on the worker; with two workers on the queue, a second turn can be scheduled where the first turn's files are not. Nothing worker-side deletes anything, so every run leaves a directory behind — silently, because `OpenWorkspace` creates what is missing rather than failing. The persistence strategy is an open decision rather than a settled design — `design/temporal-review.md:62–86`, `design/temporal-migration-plan.md:57`.
+
+The sandbox itself is not at risk from the concurrency, though. Each invocation opens its own `*tools.Workspace` and `tools.All` builds that call's four file tools around it (`temporal/temporal.go:224–232`), so `resolve` is a method on the directory it is guarding rather than a reader of a shared one. That is what lets `worker.Options{}` (`temporal/temporal.go:114`) leave the SDK's default of 1000 concurrent activity slots in place: two activities on one worker no longer resolve paths against each other's directory. It was not true while the workspace was a package-level string, which is the edge [§9](#9-open-edges) now records as closed.
+
+**What this path is not, yet.** No compaction, no spans — so a workflow run is invisible in Jaeger ([§6](#6-telemetry-and-the-trick-it-enables)) — no summarisation activity, and no approval signals. Neither eval suite covers it either, but that one is not a tracing gap: both build an `agent.Agent` and call `Run` in-process, and never start a workflow (`evals/trajectory_test.go:429`, `evals/judge_test.go:303`), so instrumenting `temporal/` would leave the coverage exactly where it is. `design/temporal-migration-plan.md` tracks the phases; `design/temporal-review.md` is the standing list of what is wrong with the path as built, ordered by how much it hurts rather than by how hard it is to fix.
+
+---
+
+## 8. Two eval suites, two different questions
+
+Neither suite scores prose — with a persona system prompt the wording varies wildly and none of that variation is what breaks. Both go through `agent.New`, `Params()` and `SystemPrompt`, so a change to the model, the tool set or the prompt is scored rather than sidestepped. Both are gated behind `-eval` because they make real, billed calls. Both also score the in-process path only, by construction: each calls `agent.Run` directly and never starts a workflow ([§7](#7-the-same-loop-made-durable)).
 
 ### `trajectory_test.go` — which tools
 
@@ -375,17 +467,20 @@ See [evals/EVALS.md](evals/EVALS.md) for the full results tables and transcripts
 
 ---
 
-## 8. Open edges
+## 9. Open edges
 
-Ordered by how much they constrain what comes next.
+Ordered by how much they constrain what comes next, in-process path first; the last four are all the workflow path ([§7](#7-the-same-loop-made-durable)), where `design/temporal-review.md` keeps the full list.
 
 | Edge | Where | Consequence | Status |
 | --- | --- | --- | --- |
 | No approval before irreversible actions | `tools/file.go` — `delete_file` | Asked to delete "my notes file" with two candidates, the agent listed both, saw the ambiguity, and deleted both — then treated the clarification as confirmation. Every individual call was valid; nothing asks first. | documented, unfixed |
-| Nothing cancels a run | `main.go:35`, both eval suites | The context is now threaded all the way into the tools, but every caller passes `context.Background()`. The plumbing is tested; what happens when a cancellation actually fires is not. | known |
+| Nothing cancels a run | `main.go:38`, both eval suites | The context is now threaded all the way into the tools, but every caller passes `context.Background()`. The plumbing is tested; what happens when a cancellation actually fires is not. | known |
 | Decay across repeated compactions is unmeasured | `evals/judge_test.go` | Every compaction case fires exactly one cut. What a fact looks like after it has been summarised twice — a summary of a summary — has never been observed. | question |
-| Binary only runs from the repo root | `main.go:22` | `apiKeyPath` is relative. The evals already work around it with `../secrets/…`. Adding a subcommand or moving the entry point breaks this first. | known |
+| Binary only runs from the repo root | `main.go:25` | `apiKeyPath` is relative. The evals already work around it with `../secrets/…`. The subcommands the warning anticipated have since landed, and `gai worker` — a long-lived process with no reason to sit in the repository — still `log.Fatal`s anywhere else. | known |
+| The workflow path has no compaction | `temporal/temporal.go:80` | `Usage` comes back so the workflow can decide when to cut, and is never read. Every step also ships the whole history as an activity input, and Temporal records inputs permanently, so the bytes grow quadratically toward the payload limit rather than merely costing more. | known |
 | A workspace path means nothing across processes | `main.go` — `runTemporal`, `temporal/temporal.go` — `RunToolActivity` | The Temporal client creates a temp directory locally and passes its *path* to the workflow; the worker opens a directory that merely shares the string. Correct only while exactly one worker is co-located with the client, and nothing on the worker side ever deletes it. The persistence strategy is undecided — `design/temporal-review.md` finding 2. | known |
+| The workflow path emits no spans | `temporal/temporal.go:4–18` | No `agent`, LLM or tool spans, so a workflow run is invisible in Jaeger. Fixing it would not extend the evals to the path: neither suite starts a workflow in the first place ([§8](#8-two-eval-suites-two-different-questions)). The second execution path is entirely unmeasured. | known |
+| Determinism is unpinned | `temporal/replayer_test.go:22` | The replay test is a registration check with the actual replay skipped for want of a recorded history. A determinism regression in workflow code is caught in production or not at all. | known |
 
 Three edges from earlier drafts are closed. Compaction landed, so the history no longer grows without bound; `tools.Function` now takes a context, so `web_search` no longer calls `context.Background()` and its nested model call is traced beneath the tool call that made it; and the workspace is no longer a package-level variable — the file tools close over a `Workspace` the way `web_search` closes over its client, so two agents in one process no longer share a directory.
 
@@ -405,4 +500,4 @@ Three edges from earlier drafts are closed. Compaction landed, so the history no
 
 ---
 
-Sources: `main.go`, `agent/*.go`, `tools/*.go`, `telemetry/*.go`, `evals/*`, [README.md](README.md), [AGENTS.md](AGENTS.md), [evals/EVALS.md](evals/EVALS.md). Eval figures quoted from `EVALS.md` runs dated 2026-07-26, 2026-07-27 and 2026-07-28.
+Sources: `main.go`, `agent/*.go`, `tools/*.go`, `telemetry/*.go`, `temporal/*.go`, `evals/*`, [README.md](README.md), [AGENTS.md](AGENTS.md), [evals/EVALS.md](evals/EVALS.md), [design/temporal-migration-plan.md](design/temporal-migration-plan.md), [design/temporal-review.md](design/temporal-review.md). Eval figures quoted from `EVALS.md` runs dated 2026-07-26, 2026-07-27 and 2026-07-28.
