@@ -403,13 +403,13 @@ What the two processes share is therefore the string, not the directory, and the
 
 `resolve` is unaffected and the sandbox invariant holds: absolute paths and escapes are still rejected. It may simply be guarding the wrong run's directory, because `SetWorkspace` writes the same package-level variable [§9](#9-open-edges) lists, and `worker.Options{}` (`temporal/temporal.go:113`) leaves the SDK's default of 1000 concurrent activity slots in place.
 
-**What this path is not, yet.** No compaction, no spans — so neither eval suite can see a workflow run at all, since both read the trajectory out of the run's own traces ([§6](#6-telemetry-and-the-trick-it-enables)) — no summarisation activity, and no approval signals. `design/temporal-migration-plan.md` tracks the phases; `design/temporal-review.md` is the standing list of what is wrong with the path as built, ordered by how much it hurts rather than by how hard it is to fix.
+**What this path is not, yet.** No compaction, no spans — so a workflow run is invisible in Jaeger ([§6](#6-telemetry-and-the-trick-it-enables)) — no summarisation activity, and no approval signals. Neither eval suite covers it either, but that one is not a tracing gap: both build an `agent.Agent` and call `Run` in-process, and never start a workflow (`evals/trajectory_test.go:429`, `evals/judge_test.go:303`), so instrumenting `temporal/` would leave the coverage exactly where it is. `design/temporal-migration-plan.md` tracks the phases; `design/temporal-review.md` is the standing list of what is wrong with the path as built, ordered by how much it hurts rather than by how hard it is to fix.
 
 ---
 
 ## 8. Two eval suites, two different questions
 
-Neither suite scores prose — with a persona system prompt the wording varies wildly and none of that variation is what breaks. Both go through `agent.New`, `Params()` and `SystemPrompt`, so a change to the model, the tool set or the prompt is scored rather than sidestepped. Both are gated behind `-eval` because they make real, billed calls. Both also score the in-process path only: they read a run's trajectory out of its spans, and the workflow path emits none ([§7](#7-the-same-loop-made-durable)).
+Neither suite scores prose — with a persona system prompt the wording varies wildly and none of that variation is what breaks. Both go through `agent.New`, `Params()` and `SystemPrompt`, so a change to the model, the tool set or the prompt is scored rather than sidestepped. Both are gated behind `-eval` because they make real, billed calls. Both also score the in-process path only, by construction: each calls `agent.Run` directly and never starts a workflow ([§7](#7-the-same-loop-made-durable)).
 
 ### `trajectory_test.go` — which tools
 
