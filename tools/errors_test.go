@@ -10,7 +10,7 @@ import (
 // the activity fails on the first attempt instead of retrying arguments that
 // cannot start working.
 func TestInvalidArgumentIsMarked(t *testing.T) {
-	newTestWorkspace(t)
+	w := newTestWorkspace(t)
 	ctx := t.Context()
 
 	// web_search parses its arguments before it touches the client, so a nil
@@ -22,17 +22,17 @@ func TestInvalidArgumentIsMarked(t *testing.T) {
 		fn   Function
 		args string
 	}{
-		{"read_file truncated JSON", readFile, `{"path":`},
-		{"write_file truncated JSON", writeFile, `{"path":`},
-		{"list_files truncated JSON", listFiles, `{"path":`},
-		{"delete_file truncated JSON", deleteFile, `{"path":`},
+		{"read_file truncated JSON", w.readFile, `{"path":`},
+		{"write_file truncated JSON", w.writeFile, `{"path":`},
+		{"list_files truncated JSON", w.listFiles, `{"path":`},
+		{"delete_file truncated JSON", w.deleteFile, `{"path":`},
 		{"current_datetime truncated JSON", dateTime, `{"timezone":`},
 		{"web_search truncated JSON", search, `{"query":`},
 
-		{"read_file wrong type", readFile, `{"path":42}`},
-		{"read_file no path", readFile, `{}`},
-		{"read_file absolute path", readFile, `{"path":"/etc/passwd"}`},
-		{"delete_file escaping path", deleteFile, `{"path":"../../outside.txt"}`},
+		{"read_file wrong type", w.readFile, `{"path":42}`},
+		{"read_file no path", w.readFile, `{}`},
+		{"read_file absolute path", w.readFile, `{"path":"/etc/passwd"}`},
+		{"delete_file escaping path", w.deleteFile, `{"path":"../../outside.txt"}`},
 		{"current_datetime unknown timezone", dateTime, `{"timezone":"Mars/Olympus"}`},
 		{"web_search empty query", search, `{"query":"  "}`},
 	}
@@ -52,19 +52,19 @@ func TestInvalidArgumentIsMarked(t *testing.T) {
 // question of what retry policy the tool activity runs under, not of the
 // arguments being malformed, so these stay unclassified.
 func TestValidArgumentIsNotMarked(t *testing.T) {
-	newTestWorkspace(t)
+	w := newTestWorkspace(t)
 	ctx := t.Context()
 
-	if _, err := readFile(ctx, `{"path":"absent.md"}`); err == nil {
+	if _, err := w.readFile(ctx, `{"path":"absent.md"}`); err == nil {
 		t.Fatal("reading a missing file succeeded, want error")
 	} else if errors.Is(err, ErrInvalidArgument) {
 		t.Errorf("reading a missing file = %v, want a plain error", err)
 	}
 
-	if _, err := writeFile(ctx, `{"path":"notes.md","content":"first"}`); err != nil {
+	if _, err := w.writeFile(ctx, `{"path":"notes.md","content":"first"}`); err != nil {
 		t.Fatalf("writeFile: %v", err)
 	}
-	if _, err := writeFile(ctx, `{"path":"notes.md","content":"second"}`); err == nil {
+	if _, err := w.writeFile(ctx, `{"path":"notes.md","content":"second"}`); err == nil {
 		t.Fatal("clobbering succeeded, want error")
 	} else if errors.Is(err, ErrInvalidArgument) {
 		t.Errorf("refusing to clobber = %v, want a plain error", err)
