@@ -387,7 +387,7 @@ func TestEval(t *testing.T) {
 func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error) {
 	t.Helper()
 
-	cleanupWorkspace, err := tools.NewWorkspace()
+	workspace, cleanupWorkspace, err := tools.NewWorkspace()
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +397,7 @@ func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error
 		}
 	}()
 	for name, content := range c.seed {
-		path := filepath.Join(tools.Workspace(), name)
+		path := filepath.Join(workspace.Dir(), name)
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return nil, err
 		}
@@ -419,7 +419,7 @@ func runCase(t *testing.T, client *openai.Client, c evalCase) ([]toolCall, error
 
 	// Start from the parameters the CLI ships with, so a change to the model,
 	// the tool set or the system prompt is scored rather than sidestepped.
-	ag := agent.New(client)
+	ag := agent.New(client, workspace)
 	params := ag.Params()
 	// Temperature 0 keeps the runs as comparable as the API allows. It does not
 	// make them identical, which is why cases are scored as a rate.

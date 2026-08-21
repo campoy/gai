@@ -43,7 +43,7 @@ func TestDefaultActivityOptions(t *testing.T) {
 func TestPermanentFailuresAreNonRetryable(t *testing.T) {
 	t.Run("chat completion without an API key", func(t *testing.T) {
 		t.Setenv(apiKeyEnvName, "")
-		_, err := ChatCompletionActivity(t.Context(), CompletionRequest{WorkspaceDir: t.TempDir()})
+		_, err := ChatCompletionActivity(t.Context(), CompletionRequest{})
 		assertNonRetryable(t, err, errTypeMissingAPIKey)
 	})
 

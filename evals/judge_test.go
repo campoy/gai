@@ -262,7 +262,7 @@ func TestJudgeConversations(t *testing.T) {
 func converse(t *testing.T, client *openai.Client, c conversationCase) (string, error) {
 	t.Helper()
 
-	cleanup, err := tools.NewWorkspace()
+	workspace, cleanup, err := tools.NewWorkspace()
 	if err != nil {
 		return "", err
 	}
@@ -272,7 +272,7 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 		}
 	}()
 	for name, content := range c.seed {
-		if err := os.WriteFile(filepath.Join(tools.Workspace(), name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(workspace.Dir(), name), []byte(content), 0o644); err != nil {
 			return "", err
 		}
 	}
@@ -294,7 +294,7 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 
 	// The parameters the CLI ships with, pinned to temperature 0 so repeated
 	// runs are as comparable as the API allows.
-	ag := agent.New(client)
+	ag := agent.New(client, workspace)
 	params := ag.Params()
 	params.Temperature = openai.Float(0)
 
@@ -334,7 +334,7 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 
 	// The judge also sees what the workspace actually ended up holding, so it
 	// can catch an assistant that describes a file it never wrote.
-	entries, err := os.ReadDir(tools.Workspace())
+	entries, err := os.ReadDir(workspace.Dir())
 	if err != nil {
 		return "", err
 	}
@@ -347,7 +347,7 @@ func converse(t *testing.T, client *openai.Client, c conversationCase) (string, 
 			fmt.Fprintf(transcript, "%s/ (directory)\n", e.Name())
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(tools.Workspace(), e.Name()))
+		b, err := os.ReadFile(filepath.Join(workspace.Dir(), e.Name()))
 		if err != nil {
 			return "", err
 		}
